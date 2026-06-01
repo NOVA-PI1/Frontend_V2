@@ -8,8 +8,9 @@ const socketUrl =
 
 export function createSocket(): Socket {
   return io(socketUrl, {
-    transports: ['websocket'],
+    transports: ['polling', 'websocket'],  // polling primero como fallback
     autoConnect: true,
+    withCredentials: false,
   });
 }
 
