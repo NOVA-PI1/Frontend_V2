@@ -165,6 +165,50 @@ pre {
   background: #14171a;
 }
 
+.user-chip {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #14171a;
+}
+
+.user-chip img {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.user-chip strong,
+.user-chip small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-chip small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.user-chip button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-strong);
+  padding: 0 10px;
+}
+
+.user-chip button:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
 .status-dot,
 .step-dot {
   width: 10px;
@@ -454,6 +498,79 @@ pre {
   margin: 0 0 8px;
   color: var(--danger);
   font-size: 0.9rem;
+}
+
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--app-bg);
+}
+
+.auth-card {
+  width: min(100%, 430px);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+
+.auth-card .brand-mark {
+  margin-bottom: 18px;
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 1.8rem;
+  line-height: 1.1;
+}
+
+.auth-card p {
+  margin: 14px 0 20px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.auth-card small {
+  display: block;
+  margin-top: 14px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.google-button {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f5f7f9;
+  color: #15171a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.google-button:hover {
+  background: #ffffff;
+}
+
+.google-button span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4285f4;
+  font-weight: 900;
+}
+
+.auth-loader {
+  margin-top: 18px;
 }
 
 .work-panel {

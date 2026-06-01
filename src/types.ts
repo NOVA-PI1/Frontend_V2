@@ -5,6 +5,26 @@ export type HealthResponse = {
   llm_model: string;
 };
 
+export type AuthProvidersResponse = {
+  auth_required: boolean;
+  providers: string[];
+};
+
+export type AuthUser = {
+  user_id: string;
+  provider: string;
+  provider_user_id?: string;
+  email: string;
+  name: string;
+  avatar_url?: string;
+  email_verified?: boolean;
+};
+
+export type AuthMeResponse = {
+  authenticated: boolean;
+  user: AuthUser;
+};
+
 export type SessionSummary = {
   session_id: string;
   title: string;

@@ -1,7 +1,29 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { createSession, getApiBaseUrl, getHealth, getSession, listSessions } from './api';
+import {
+  clearAuthToken,
+  consumeAuthParams,
+  createSession,
+  getApiBaseUrl,
+  getAuthProviders,
+  getAuthToken,
+  getCurrentUser,
+  getGoogleLoginUrl,
+  getHealth,
+  getSession,
+  listSessions,
+  setAuthToken,
+} from './api';
 import { createSocket, isBusEvent } from './socket';
-import type { AgentResult, BusEvent, ChatMessage, HealthResponse, SessionResponse, SessionSummary } from './types';
+import type {
+  AgentResult,
+  AuthProvidersResponse,
+  AuthUser,
+  BusEvent,
+  ChatMessage,
+  HealthResponse,
+  SessionResponse,
+  SessionSummary,
+} from './types';
 
 type WorkMode = 'think' | 'do';
 type SessionAgent = 'editorial' | 'etico' | 'dialectico' | 'multimodal';
@@ -130,6 +152,9 @@ function buildDoItems(session: SessionResponse | null) {
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [authProviders, setAuthProviders] = useState<AuthProvidersResponse | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSession, setActiveSession] = useState<SessionResponse | null>(null);
@@ -144,14 +169,41 @@ export function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const [healthResponse, sessionList] = await Promise.all([getHealth(), listSessions()]);
+        const authParams = consumeAuthParams();
+        if (authParams.token) {
+          setAuthToken(authParams.token);
+        }
+        if (authParams.error) {
+          setError(`Google no pudo iniciar sesión: ${authParams.error}`);
+        }
+
+        const [healthResponse, providersResponse] = await Promise.all([getHealth(), getAuthProviders()]);
         setHealth(healthResponse);
+        setAuthProviders(providersResponse);
+
+        const token = getAuthToken();
+        if (providersResponse.auth_required && !token) {
+          return;
+        }
+
+        if (token) {
+          const me = await getCurrentUser();
+          setUser(me.user);
+        }
+
+        const sessionList = await listSessions();
         setSessions(sessionList);
         if (sessionList[0]?.session_id) {
           setActiveSessionId(sessionList[0].session_id);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'No se pudo conectar con el backend');
+        if (err instanceof Error && err.message.includes('401')) {
+          clearAuthToken();
+          setUser(null);
+        }
+      } finally {
+        setAuthReady(true);
       }
     })();
   }, []);
@@ -173,6 +225,10 @@ export function App() {
   }, [activeSessionId]);
 
   useEffect(() => {
+    if (!authReady || (authProviders?.auth_required && !user)) {
+      return undefined;
+    }
+
     const socket = createSocket();
 
     socket.on('connect', () => {
@@ -201,7 +257,7 @@ export function App() {
     return () => {
       socket.disconnect();
     };
-  }, [activeSessionId]);
+  }, [activeSessionId, authProviders?.auth_required, authReady, user]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -267,6 +323,51 @@ export function App() {
     setInputText('');
   }
 
+  function handleLogout() {
+    clearAuthToken();
+    setUser(null);
+    setSessions([]);
+    startNewSession();
+  }
+
+  const loginRequired = authReady && Boolean(authProviders?.auth_required) && !user;
+
+  if (!authReady) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="brand-mark">N</div>
+          <h1>NOVA</h1>
+          <p>Preparando la sesión segura...</p>
+          <div className="thinking-loader auth-loader">
+            <span />
+            <span />
+            <span />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loginRequired) {
+    return (
+      <div className="auth-screen">
+        <section className="auth-card">
+          <div className="brand-mark">N</div>
+          <span className="eyebrow">NOVA Studio</span>
+          <h1>Inicia sesión para continuar</h1>
+          <p>El backend de Railway tiene autenticación activa. Entra con Google para cargar tus sesiones y usar los agentes.</p>
+          {error && <p className="error-line">{error}</p>}
+          <a className="google-button" href={getGoogleLoginUrl()}>
+            <span>G</span>
+            Continuar con Google
+          </a>
+          <small>{getApiBaseUrl()}</small>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -290,6 +391,19 @@ export function App() {
             <small>{getApiBaseUrl()}</small>
           </div>
         </div>
+
+        {user && (
+          <div className="user-chip">
+            {user.avatar_url ? <img alt="" src={user.avatar_url} /> : <div className="avatar">{user.name.slice(0, 1)}</div>}
+            <div>
+              <strong>{user.name}</strong>
+              <small>{user.email}</small>
+            </div>
+            <button onClick={handleLogout} type="button" title="Cerrar sesión">
+              Salir
+            </button>
+          </div>
+        )}
 
         <section className="sidebar-section">
           <div className="section-title">

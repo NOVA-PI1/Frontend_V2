@@ -1,11 +1,22 @@
-import type { HealthResponse, SessionResponse, SessionSummary } from './types';
+import type { AuthMeResponse, AuthProvidersResponse, HealthResponse, SessionResponse, SessionSummary } from './types';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'https://novabackend-production-663e.up.railway.app';
+const authTokenKey = 'nova_auth_token';
+
+function getStoredAuthToken(): string | null {
+  return window.localStorage.getItem(authTokenKey);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getStoredAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -13,7 +24,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || `HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}: ${detail || response.statusText}`);
   }
 
   return response.json() as Promise<T>;
@@ -23,8 +34,46 @@ export function getApiBaseUrl() {
   return apiBaseUrl;
 }
 
+export function getAuthToken(): string | null {
+  return getStoredAuthToken();
+}
+
+export function setAuthToken(token: string): void {
+  window.localStorage.setItem(authTokenKey, token);
+}
+
+export function clearAuthToken(): void {
+  window.localStorage.removeItem(authTokenKey);
+}
+
+export function consumeAuthParams(): { token: string | null; error: string | null } {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get('auth_token');
+  const error = url.searchParams.get('auth_error');
+  if (token || error) {
+    url.searchParams.delete('auth_token');
+    url.searchParams.delete('auth_error');
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  }
+  return { token, error };
+}
+
+export function getGoogleLoginUrl(): string {
+  const redirectUrl = `${window.location.origin}${window.location.pathname}`;
+  const params = new URLSearchParams({ frontend_redirect_url: redirectUrl });
+  return `${apiBaseUrl}/auth/google/authorize?${params.toString()}`;
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   return requestJson<HealthResponse>('/health');
+}
+
+export async function getAuthProviders(): Promise<AuthProvidersResponse> {
+  return requestJson<AuthProvidersResponse>('/auth/providers');
+}
+
+export async function getCurrentUser(): Promise<AuthMeResponse> {
+  return requestJson<AuthMeResponse>('/auth/me');
 }
 
 export async function listSessions(userId?: string): Promise<SessionSummary[]> {
