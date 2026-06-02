@@ -35,6 +35,8 @@ export type SessionSummary = {
 };
 
 export type AgentName = 'editorial' | 'etico' | 'dialectico' | 'multimodal' | 'orchestrator';
+export type Operation = 'generate' | 'revise' | 'question' | 'format';
+export type OutputFormat = 'article' | 'twitter_thread' | 'instagram_post' | 'instagram_carousel' | 'linkedin_post' | 'caption';
 
 export type AgentResult = {
   agent: AgentName;
@@ -53,6 +55,33 @@ export type KnowledgeHit = {
   source?: string;
 };
 
+export type WebSearchResult = {
+  title: string;
+  url: string;
+  snippet?: string;
+  published_at?: string | null;
+  source?: string;
+};
+
+export type DraftRevision = {
+  id?: number | null;
+  session_id: string;
+  version: number;
+  content: string;
+  source: string;
+  instruction?: string | null;
+  agent?: AgentName | null;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type DriveDocument = {
+  document_id: string;
+  url: string;
+  last_synced_at: string;
+  shared: boolean;
+};
+
 export type SessionResponse = {
   session_id: string;
   input_text?: string;
@@ -62,8 +91,14 @@ export type SessionResponse = {
   dialectico?: AgentResult | null;
   multimodal?: AgentResult | null;
   knowledge_hits?: KnowledgeHit[];
+  web_hits?: WebSearchResult[];
   trace?: AgentResult[];
   metadata?: Record<string, unknown>;
+  drafts?: DraftRevision[];
+  current_draft?: DraftRevision | null;
+  suggested_questions?: string[];
+  social_outputs?: Record<string, string>;
+  drive_document?: DriveDocument | null;
 };
 
 export type BusEvent = {

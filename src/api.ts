@@ -1,4 +1,14 @@
-import type { AuthMeResponse, AuthProvidersResponse, HealthResponse, SessionResponse, SessionSummary } from './types';
+import type {
+  AuthMeResponse,
+  AuthProvidersResponse,
+  DraftRevision,
+  DriveDocument,
+  HealthResponse,
+  Operation,
+  OutputFormat,
+  SessionResponse,
+  SessionSummary,
+} from './types';
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'https://novabackend-production-663e.up.railway.app';
 const authTokenKey = 'nova_auth_token';
@@ -88,15 +98,75 @@ export async function getSession(sessionId: string): Promise<SessionResponse> {
   return requestJson<SessionResponse>(`/session/${sessionId}`);
 }
 
-export async function createSession(inputText: string, sessionId?: string): Promise<SessionResponse> {
+export type SessionOptions = {
+  sessionId?: string;
+  operation?: Operation;
+  targetDraftId?: number | null;
+  outputFormat?: OutputFormat;
+  useWebContext?: boolean;
+};
+
+export async function createSession(inputText: string, options: SessionOptions = {}): Promise<SessionResponse> {
   return requestJson<SessionResponse>('/session', {
     method: 'POST',
     body: JSON.stringify({
       texto: inputText,
-      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(options.sessionId ? { session_id: options.sessionId } : {}),
       perfil: {},
       metadata: {},
       images: [],
+      operation: options.operation ?? 'generate',
+      target_draft_id: options.targetDraftId ?? null,
+      output_format: options.outputFormat ?? 'article',
+      use_web_context: Boolean(options.useWebContext),
+    }),
+  });
+}
+
+export async function listDrafts(sessionId: string): Promise<DraftRevision[]> {
+  return requestJson<DraftRevision[]>(`/session/${sessionId}/drafts`);
+}
+
+export async function createDraft(
+  sessionId: string,
+  content: string,
+  instruction?: string,
+): Promise<DraftRevision> {
+  return requestJson<DraftRevision>(`/session/${sessionId}/drafts`, {
+    method: 'POST',
+    body: JSON.stringify({
+      content,
+      source: 'canvas',
+      instruction,
+      agent: 'editorial',
+      metadata: {},
+    }),
+  });
+}
+
+export async function suggestQuestions(sessionId: string, text?: string, draftId?: number | null): Promise<string[]> {
+  return requestJson<string[]>(`/session/${sessionId}/questions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      text: text || null,
+      draft_id: draftId ?? null,
+      count: 6,
+    }),
+  });
+}
+
+export async function applyDriveAction(
+  sessionId: string,
+  action: 'create' | 'update' | 'delete',
+  draftId?: number | null,
+  content?: string,
+): Promise<{ drive_document: DriveDocument | null }> {
+  return requestJson<{ drive_document: DriveDocument | null }>(`/session/${sessionId}/drive`, {
+    method: 'POST',
+    body: JSON.stringify({
+      action,
+      draft_id: draftId ?? null,
+      content: content || null,
     }),
   });
 }

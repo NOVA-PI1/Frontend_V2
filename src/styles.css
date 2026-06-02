@@ -331,6 +331,13 @@ pre {
   white-space: nowrap;
 }
 
+.active-text-label {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .message-stream {
   overflow: auto;
   padding: 26px clamp(18px, 6vw, 96px) 28px;
@@ -472,6 +479,38 @@ pre {
   line-height: 1.45;
 }
 
+.composer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-right: 8px;
+}
+
+.composer-controls select,
+.canvas-actions select {
+  min-height: 34px;
+  max-width: 180px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #111417;
+  color: var(--text);
+  padding: 0 9px;
+}
+
+.toggle-control {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted-strong);
+  background: #111417;
+}
+
 .composer textarea::placeholder {
   color: #8c929b;
 }
@@ -582,6 +621,97 @@ pre {
   border-left: 1px solid var(--line-soft);
 }
 
+.canvas-box,
+.drive-box {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.canvas-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.canvas-box textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: 42vh;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: 0;
+  background: #111417;
+  color: var(--text);
+  padding: 12px;
+  line-height: 1.55;
+}
+
+.canvas-actions,
+.drive-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.canvas-actions {
+  justify-content: space-between;
+}
+
+.canvas-actions button,
+.question-list button,
+.drive-actions button,
+.drive-actions a,
+.question-list .section-title button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #111417;
+  color: var(--muted-strong);
+  padding: 0 10px;
+  text-decoration: none;
+}
+
+.canvas-actions button:hover,
+.question-list button:hover,
+.drive-actions button:hover,
+.drive-actions a:hover {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.question-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.question-list > button {
+  height: auto;
+  min-height: 38px;
+  padding: 9px 10px;
+  text-align: left;
+  line-height: 1.35;
+}
+
+.drive-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.drive-box strong,
+.drive-box small {
+  display: block;
+}
+
+.drive-box small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
 .work-header h2 {
   font-size: 1.35rem;
 }
@@ -673,6 +803,18 @@ pre {
 .knowledge-box strong {
   color: var(--muted-strong);
   font-size: 0.9rem;
+}
+
+.knowledge-box a {
+  display: inline-flex;
+  margin: 0 0 6px;
+  color: #9ce7d1;
+  font-size: 0.86rem;
+  text-decoration: none;
+}
+
+.knowledge-box a:hover {
+  text-decoration: underline;
 }
 
 .empty-state {

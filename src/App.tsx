@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
+  applyDriveAction,
   clearAuthToken,
   consumeAuthParams,
+  createDraft,
   createSession,
   getApiBaseUrl,
   getAuthProviders,
@@ -12,6 +14,7 @@ import {
   getSession,
   listSessions,
   setAuthToken,
+  suggestQuestions,
 } from './api';
 import { createSocket, isBusEvent } from './socket';
 import type {
@@ -20,7 +23,10 @@ import type {
   AuthUser,
   BusEvent,
   ChatMessage,
+  DraftRevision,
   HealthResponse,
+  Operation,
+  OutputFormat,
   SessionResponse,
   SessionSummary,
 } from './types';
@@ -29,6 +35,14 @@ type WorkMode = 'think' | 'do';
 type SessionAgent = 'editorial' | 'etico' | 'dialectico' | 'multimodal';
 
 const AGENT_ORDER: SessionAgent[] = ['editorial', 'etico', 'dialectico', 'multimodal'];
+const FORMAT_OPTIONS: Array<{ value: OutputFormat; label: string }> = [
+  { value: 'article', label: 'Artículo' },
+  { value: 'twitter_thread', label: 'Hilo X' },
+  { value: 'instagram_post', label: 'Instagram' },
+  { value: 'instagram_carousel', label: 'Carrusel' },
+  { value: 'linkedin_post', label: 'LinkedIn' },
+  { value: 'caption', label: 'Caption' },
+];
 
 function formatTimestamp(value: string): string {
   try {
@@ -72,6 +86,28 @@ function getAgentResults(session: SessionResponse | null): AgentResult[] {
   }
 
   return AGENT_ORDER.map((agent) => session[agent]).filter((result): result is AgentResult => Boolean(result));
+}
+
+function draftLabel(draft: DraftRevision): string {
+  return `v${draft.version} · ${draft.source}`;
+}
+
+function selectedDraft(session: SessionResponse | null, selectedDraftId: number | null): DraftRevision | null {
+  if (!session) {
+    return null;
+  }
+  const drafts = session.drafts ?? [];
+  return drafts.find((draft) => draft.id === selectedDraftId) ?? session.current_draft ?? drafts[drafts.length - 1] ?? null;
+}
+
+function currentTextLabel(session: SessionResponse | null, draft: DraftRevision | null): string {
+  if (draft) {
+    return `Borrador activo ${draftLabel(draft)}`;
+  }
+  if (session?.editorial?.output) {
+    return 'Salida editorial';
+  }
+  return 'Texto original';
 }
 
 function eventSummary(event: BusEvent): string {
@@ -164,6 +200,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [sideNote, setSideNote] = useState('Listo para crear una sesión.');
   const [workMode, setWorkMode] = useState<WorkMode>('think');
+  const [operation, setOperation] = useState<Operation>('generate');
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('article');
+  const [useWebContext, setUseWebContext] = useState(false);
+  const [selectedDraftId, setSelectedDraftId] = useState<number | null>(null);
+  const [canvasText, setCanvasText] = useState('');
+  const [canvasSaving, setCanvasSaving] = useState(false);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
+  const [driveLoading, setDriveLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -263,15 +307,33 @@ export function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [activeSession, loading]);
 
+  useEffect(() => {
+    const drafts = activeSession?.drafts ?? [];
+    const draft = activeSession?.current_draft ?? drafts[drafts.length - 1] ?? null;
+    setSelectedDraftId(draft?.id ?? null);
+    setCanvasText(draft?.content ?? activeSession?.editorial?.output ?? activeSession?.input_text ?? '');
+  }, [activeSession?.session_id, activeSession?.current_draft?.id, activeSession?.editorial?.output]);
+
   const messages = useMemo(() => buildMessages(activeSession), [activeSession]);
   const thinkItems = useMemo(() => buildThinkItems(activeSession, events), [activeSession, events]);
   const doItems = useMemo(() => buildDoItems(activeSession), [activeSession]);
   const visibleWorkItems = workMode === 'think' ? thinkItems : doItems;
   const activeSessionEvents = events.filter((event) => event.session_id === activeSessionId);
+  const activeDraft = selectedDraft(activeSession, selectedDraftId);
+  const activeTextDescriptor = currentTextLabel(activeSession, activeDraft);
 
   async function submitPrompt() {
     const prompt = inputText.trim();
-    if (!prompt || loading) {
+    const fallbackPrompt =
+      operation === 'format'
+        ? `Adaptar el borrador activo a formato ${outputFormat}.`
+        : operation === 'question'
+          ? 'Formula preguntas críticas sobre el texto activo.'
+          : operation === 'revise'
+            ? 'Revisa el borrador activo manteniendo su intención.'
+            : '';
+    const instruction = prompt || fallbackPrompt;
+    if (!instruction || loading) {
       return;
     }
 
@@ -279,14 +341,20 @@ export function App() {
     setError(null);
     setSideNote('NOVA está pensando...');
     try {
-      const response = await createSession(prompt, activeSessionId ?? undefined);
+      const response = await createSession(instruction, {
+        sessionId: activeSessionId ?? undefined,
+        operation,
+        targetDraftId: selectedDraftId,
+        outputFormat,
+        useWebContext,
+      });
       setActiveSession(response);
       setActiveSessionId(response.session_id);
       setInputText('');
       setSessions((current) => [
         {
           session_id: response.session_id,
-          title: response.input_text || prompt,
+          title: response.input_text || instruction,
           status: response.status,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -294,6 +362,10 @@ export function App() {
         },
         ...current.filter((item) => item.session_id !== response.session_id),
       ]);
+      if (response.current_draft?.content) {
+        setCanvasText(response.current_draft.content);
+        setSelectedDraftId(response.current_draft.id ?? null);
+      }
       setSideNote(`Sesión ${response.status}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo crear la sesión');
@@ -311,6 +383,85 @@ export function App() {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void submitPrompt();
+    }
+  }
+
+  async function refreshActiveSession(sessionId = activeSessionId) {
+    if (!sessionId) {
+      return;
+    }
+    const session = await getSession(sessionId);
+    setActiveSession(session);
+  }
+
+  async function saveCanvasDraft() {
+    if (!activeSessionId || !canvasText.trim() || canvasSaving) {
+      return;
+    }
+    setCanvasSaving(true);
+    setError(null);
+    try {
+      const draft = await createDraft(activeSessionId, canvasText.trim(), 'Edición manual de canvas');
+      setSelectedDraftId(draft.id ?? null);
+      await refreshActiveSession(activeSessionId);
+      setSideNote(`Canvas guardado como ${draftLabel(draft)}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el canvas');
+    } finally {
+      setCanvasSaving(false);
+    }
+  }
+
+  async function requestQuestions(questionText?: string) {
+    if (!activeSessionId || questionsLoading) {
+      return;
+    }
+    setQuestionsLoading(true);
+    setError(null);
+    try {
+      await suggestQuestions(activeSessionId, questionText ?? canvasText, selectedDraftId);
+      await refreshActiveSession(activeSessionId);
+      setSideNote('Preguntas actualizadas');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron generar preguntas');
+    } finally {
+      setQuestionsLoading(false);
+    }
+  }
+
+  async function runQuestion(question: string) {
+    setOperation('question');
+    setInputText(question);
+    await createSession(question, {
+      sessionId: activeSessionId ?? undefined,
+      operation: 'question',
+      targetDraftId: selectedDraftId,
+      outputFormat,
+      useWebContext,
+    })
+      .then((response) => {
+        setActiveSession(response);
+        setActiveSessionId(response.session_id);
+        setInputText('');
+        setSideNote('Pregunta enviada al texto activo');
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'No se pudo enviar la pregunta'));
+  }
+
+  async function syncDrive(action: 'create' | 'update' | 'delete') {
+    if (!activeSessionId || driveLoading) {
+      return;
+    }
+    setDriveLoading(true);
+    setError(null);
+    try {
+      await applyDriveAction(activeSessionId, action, selectedDraftId, canvasText);
+      await refreshActiveSession(activeSessionId);
+      setSideNote(action === 'delete' ? 'Documento de Drive eliminado' : 'Drive sincronizado');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo sincronizar Drive');
+    } finally {
+      setDriveLoading(false);
     }
   }
 
@@ -432,6 +583,7 @@ export function App() {
           <div>
             <span className="eyebrow">NOVA Studio</span>
             <h1>{activeSession?.input_text ? summarizeText(activeSession.input_text, 74) : 'Nueva conversación'}</h1>
+            <small className="active-text-label">{activeTextDescriptor}</small>
           </div>
           <div className="topbar-status">
             <span>{activeSession?.status ?? 'sin sesión'}</span>
@@ -492,21 +644,136 @@ export function App() {
 
         <form className="composer" onSubmit={handleSubmit}>
           {error && <p className="error-line">{error}</p>}
+          <div className="composer-controls" aria-label="Controles editoriales">
+            <select
+              aria-label="Operación"
+              onChange={(event) => setOperation(event.target.value as Operation)}
+              value={operation}
+            >
+              <option value="generate">Generar</option>
+              <option value="revise">Revisar canvas</option>
+              <option value="question">Preguntar</option>
+              <option value="format">Formatear</option>
+            </select>
+            <select
+              aria-label="Formato de salida"
+              disabled={operation !== 'format'}
+              onChange={(event) => setOutputFormat(event.target.value as OutputFormat)}
+              value={outputFormat}
+            >
+              {FORMAT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <label className="toggle-control">
+              <input checked={useWebContext} onChange={(event) => setUseWebContext(event.target.checked)} type="checkbox" />
+              Web
+            </label>
+          </div>
           <textarea
             aria-label="Mensaje para NOVA"
             onChange={(event) => setInputText(event.target.value)}
             onKeyDown={handleComposerKeyDown}
-            placeholder="Escribe tu solicitud..."
+            placeholder={
+              operation === 'revise'
+                ? 'Indica cómo modificar el borrador activo...'
+                : operation === 'question'
+                  ? 'Pregunta algo sobre el texto activo...'
+                  : operation === 'format'
+                    ? 'Añade una instrucción opcional para el formato...'
+                    : 'Escribe tu solicitud...'
+            }
             rows={1}
             value={inputText}
           />
-          <button className="send-button" disabled={loading || !inputText.trim()} title="Enviar" type="submit">
+          <button
+            className="send-button"
+            disabled={loading || (!inputText.trim() && operation === 'generate')}
+            title="Enviar"
+            type="submit"
+          >
             ↑
           </button>
         </form>
       </main>
 
       <aside className="work-panel">
+        <section className="canvas-box">
+          <div className="section-title">
+            <span>Canvas editorial</span>
+            <small>{activeTextDescriptor}</small>
+          </div>
+
+          <textarea
+            aria-label="Borrador activo"
+            disabled={!activeSessionId}
+            onChange={(event) => setCanvasText(event.target.value)}
+            placeholder="El borrador activo aparecerá aquí."
+            value={canvasText}
+          />
+
+          <div className="canvas-actions">
+            <select
+              aria-label="Historial de versiones"
+              disabled={!activeSession?.drafts?.length}
+              onChange={(event) => {
+                const nextId = event.target.value ? Number(event.target.value) : null;
+                const nextDraft = (activeSession?.drafts ?? []).find((draft) => draft.id === nextId) ?? null;
+                setSelectedDraftId(nextId);
+                setCanvasText(nextDraft?.content ?? activeSession?.editorial?.output ?? '');
+              }}
+              value={selectedDraftId ?? ''}
+            >
+              <option value="">Sin versión</option>
+              {(activeSession?.drafts ?? []).map((draft) => (
+                <option key={draft.id ?? draft.version} value={draft.id ?? ''}>
+                  {draftLabel(draft)}
+                </option>
+              ))}
+            </select>
+            <button disabled={!activeSessionId || canvasSaving || !canvasText.trim()} onClick={saveCanvasDraft} type="button">
+              {canvasSaving ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+
+          <div className="question-list">
+            <div className="section-title">
+              <span>Preguntas sugeridas</span>
+              <button disabled={!activeSessionId || questionsLoading} onClick={() => void requestQuestions()} type="button">
+                {questionsLoading ? '...' : 'Generar'}
+              </button>
+            </div>
+            {(activeSession?.suggested_questions ?? []).slice(0, 6).map((question) => (
+              <button key={question} onClick={() => void runQuestion(question)} type="button">
+                {question}
+              </button>
+            ))}
+            {!activeSession?.suggested_questions?.length && <p className="empty-state">Sin preguntas todavía.</p>}
+          </div>
+
+          <div className="drive-box">
+            <div>
+              <strong>{activeSession?.drive_document ? 'Google Doc vinculado' : 'Sin Google Doc'}</strong>
+              {activeSession?.drive_document && <small>{formatTimestamp(activeSession.drive_document.last_synced_at)}</small>}
+            </div>
+            <div className="drive-actions">
+              <button disabled={!activeSessionId || driveLoading} onClick={() => void syncDrive(activeSession?.drive_document ? 'update' : 'create')} type="button">
+                {activeSession?.drive_document ? 'Actualizar' : 'Crear'}
+              </button>
+              {activeSession?.drive_document && (
+                <a href={activeSession.drive_document.url} rel="noreferrer" target="_blank">
+                  Abrir
+                </a>
+              )}
+              <button disabled={!activeSession?.drive_document || driveLoading} onClick={() => void syncDrive('delete')} type="button">
+                Borrar
+              </button>
+            </div>
+          </div>
+        </section>
+
         <div className="work-header">
           <div>
             <span className="eyebrow">Trazabilidad</span>
@@ -558,6 +825,39 @@ export function App() {
           ))}
           {!activeSession?.knowledge_hits?.length && <p className="empty-state">Sin documentos recuperados todavía.</p>}
         </section>
+
+        <section className="knowledge-box">
+          <div className="section-title">
+            <span>Web / citas</span>
+            <small>{activeSession?.web_hits?.length ?? 0}</small>
+          </div>
+          {(activeSession?.web_hits ?? []).slice(0, 4).map((hit) => (
+            <article key={hit.url}>
+              <strong>{hit.title}</strong>
+              <p>{summarizeText(hit.snippet || hit.url, 130)}</p>
+              <a href={hit.url} rel="noreferrer" target="_blank">
+                Abrir fuente
+              </a>
+              {hit.published_at && <small>{hit.published_at}</small>}
+            </article>
+          ))}
+          {!activeSession?.web_hits?.length && <p className="empty-state">Activa Web antes de enviar para traer contexto externo.</p>}
+        </section>
+
+        {activeSession?.social_outputs && Object.keys(activeSession.social_outputs).length > 0 && (
+          <section className="knowledge-box">
+            <div className="section-title">
+              <span>Formatos sociales</span>
+              <small>{Object.keys(activeSession.social_outputs).length}</small>
+            </div>
+            {Object.entries(activeSession.social_outputs).map(([format, output]) => (
+              <article key={format}>
+                <strong>{FORMAT_OPTIONS.find((option) => option.value === format)?.label ?? format}</strong>
+                <p>{summarizeText(output, 180)}</p>
+              </article>
+            ))}
+          </section>
+        )}
       </aside>
     </div>
   );
