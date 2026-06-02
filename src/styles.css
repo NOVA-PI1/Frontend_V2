@@ -299,6 +299,10 @@ pre {
   background: rgba(16, 18, 20, 0.92);
 }
 
+.topbar > div:first-child {
+  min-width: 0;
+}
+
 .eyebrow {
   display: block;
   margin-bottom: 5px;
@@ -320,6 +324,13 @@ pre {
 .topbar h1 {
   font-size: clamp(1.05rem, 2vw, 1.35rem);
   font-weight: 650;
+}
+
+.topbar-lead {
+  margin: 8px 0 0;
+  color: var(--muted-strong);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .topbar-status {
@@ -384,6 +395,79 @@ pre {
   font-size: 0.98rem;
 }
 
+.agent-output-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-output-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--assistant);
+  padding: 12px;
+}
+
+.agent-output-card--primary {
+  border-color: rgba(16, 163, 127, 0.46);
+  background: linear-gradient(180deg, rgba(16, 163, 127, 0.08), rgba(24, 27, 31, 1));
+}
+
+.agent-output-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.agent-output-card strong {
+  font-size: 0.92rem;
+  color: var(--muted-strong);
+}
+
+.agent-output-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-output-badges span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.74rem;
+  color: var(--muted-strong);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.agent-output-badges .badge-error {
+  border-color: rgba(255, 107, 107, 0.5);
+  color: #ff9d9d;
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.agent-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-action-row button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #111417;
+  color: var(--muted-strong);
+  padding: 0 10px;
+}
+
+.agent-action-row button:hover {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
 .thinking-loader {
   display: flex;
   gap: 6px;
@@ -426,6 +510,15 @@ pre {
   text-align: center;
 }
 
+.welcome-state::before {
+  content: '';
+  display: block;
+  width: min(460px, 82vw);
+  height: 1px;
+  margin: 0 auto 22px;
+  background: linear-gradient(90deg, transparent, rgba(16, 163, 127, 0.5), transparent);
+}
+
 .welcome-state h2 {
   font-size: clamp(1.7rem, 4vw, 2.6rem);
   font-weight: 700;
@@ -436,6 +529,23 @@ pre {
   margin: 16px auto 28px;
   color: var(--muted);
   line-height: 1.6;
+}
+
+.welcome-kpis {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 auto 18px;
+}
+
+.welcome-kpis span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  color: var(--muted-strong);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.8rem;
 }
 
 .prompt-grid {
@@ -649,6 +759,25 @@ pre {
   line-height: 1.55;
 }
 
+.canvas-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.canvas-empty strong {
+  display: block;
+  color: var(--muted-strong);
+}
+
+.canvas-empty p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
 .canvas-actions,
 .drive-actions {
   display: flex;
@@ -716,6 +845,23 @@ pre {
   font-size: 1.35rem;
 }
 
+.progress-line {
+  margin-top: 10px;
+  width: 100%;
+  max-width: 220px;
+  height: 6px;
+  border-radius: 999px;
+  background: #0f1114;
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+
+.progress-line span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #0d8065, #10a37f);
+}
+
 .live-pill {
   padding: 6px 9px;
   border: 1px solid rgba(16, 163, 127, 0.28);
@@ -768,6 +914,27 @@ pre {
 
 .work-item-top {
   justify-content: flex-start;
+}
+
+.work-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.work-badges span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.74rem;
+  color: var(--muted-strong);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.work-item--error {
+  border-color: rgba(255, 107, 107, 0.45);
 }
 
 .work-item-top strong {

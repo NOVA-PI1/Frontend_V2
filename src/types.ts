@@ -115,4 +115,12 @@ export type ChatMessage = {
   title: string;
   body: string;
   meta?: string;
+  agentBlocks?: Array<{
+    agent: AgentName;
+    output: string;
+    warnings?: string[];
+    questions?: string[];
+    tokens_used?: number;
+    error?: string | null;
+  }>;
 };

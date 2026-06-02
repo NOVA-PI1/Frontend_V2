@@ -33,6 +33,19 @@ import type {
 
 type WorkMode = 'think' | 'do';
 type SessionAgent = 'editorial' | 'etico' | 'dialectico' | 'multimodal';
+type QuickAction = 'expand' | 'revise' | 'question' | 'format';
+
+type WorkItem = {
+  id: string;
+  title: string;
+  body: string;
+  meta: string;
+  done: boolean;
+  warningsCount?: number;
+  questionsCount?: number;
+  tokensUsed?: number;
+  error?: boolean;
+};
 
 const AGENT_ORDER: SessionAgent[] = ['editorial', 'etico', 'dialectico', 'multimodal'];
 const FORMAT_OPTIONS: Array<{ value: OutputFormat; label: string }> = [
@@ -145,21 +158,33 @@ function buildMessages(session: SessionResponse | null): ChatMessage[] {
       id: `${session.session_id}-answer`,
       role: 'assistant',
       title: 'NOVA',
-      body: results.map((result) => `## ${agentLabel(result.agent)}\n${result.output}`).join('\n\n'),
+      body: results.map((result) => `${agentLabel(result.agent)}\n${result.output}`).join('\n\n'),
       meta: session.status,
+      agentBlocks: results.map((result) => ({
+        agent: result.agent,
+        output: result.output,
+        warnings: result.warnings,
+        questions: result.questions,
+        tokens_used: result.tokens_used,
+        error: result.error,
+      })),
     });
   }
 
   return messages;
 }
 
-function buildThinkItems(session: SessionResponse | null, events: BusEvent[]) {
+function buildThinkItems(session: SessionResponse | null, events: BusEvent[]): WorkItem[] {
   const traceItems = (session?.trace ?? []).map((step) => ({
     id: `${session?.session_id}-${step.agent}-${step.output.slice(0, 12)}`,
     title: agentLabel(step.agent),
     body: step.output,
     meta: step.warnings?.length ? step.warnings.join(' · ') : `${step.tokens_used ?? 0} tokens`,
     done: !step.error,
+    warningsCount: step.warnings?.length ?? 0,
+    questionsCount: step.questions?.length ?? 0,
+    tokensUsed: step.tokens_used ?? 0,
+    error: Boolean(step.error),
   }));
 
   const liveItems = events
@@ -171,18 +196,23 @@ function buildThinkItems(session: SessionResponse | null, events: BusEvent[]) {
       body: eventSummary(event),
       meta: formatTimestamp(event.created_at),
       done: event.type.includes('completed'),
+      error: event.type.includes('error'),
     }));
 
   return [...traceItems, ...liveItems];
 }
 
-function buildDoItems(session: SessionResponse | null) {
+function buildDoItems(session: SessionResponse | null): WorkItem[] {
   return getAgentResults(session).map((result) => ({
     id: `${session?.session_id}-${result.agent}-do`,
     title: agentLabel(result.agent),
     body: result.output,
     meta: result.error ? `Error: ${result.error}` : result.questions?.length ? `${result.questions.length} preguntas` : 'Listo',
     done: !result.error,
+    warningsCount: result.warnings?.length ?? 0,
+    questionsCount: result.questions?.length ?? 0,
+    tokensUsed: result.tokens_used ?? 0,
+    error: Boolean(result.error),
   }));
 }
 
@@ -317,10 +347,13 @@ export function App() {
   const messages = useMemo(() => buildMessages(activeSession), [activeSession]);
   const thinkItems = useMemo(() => buildThinkItems(activeSession, events), [activeSession, events]);
   const doItems = useMemo(() => buildDoItems(activeSession), [activeSession]);
+  const agentResults = useMemo(() => getAgentResults(activeSession), [activeSession]);
   const visibleWorkItems = workMode === 'think' ? thinkItems : doItems;
   const activeSessionEvents = events.filter((event) => event.session_id === activeSessionId);
   const activeDraft = selectedDraft(activeSession, selectedDraftId);
   const activeTextDescriptor = currentTextLabel(activeSession, activeDraft);
+  const completedAgents = agentResults.filter((result) => !result.error && result.output?.trim().length).length;
+  const progressPercent = agentResults.length ? Math.round((completedAgents / agentResults.length) * 100) : 0;
 
   async function submitPrompt() {
     const prompt = inputText.trim();
@@ -448,6 +481,62 @@ export function App() {
       .catch((err) => setError(err instanceof Error ? err.message : 'No se pudo enviar la pregunta'));
   }
 
+  async function runQuickAction(action: QuickAction) {
+    if (!activeSessionId || loading) {
+      return;
+    }
+
+    const config: Record<QuickAction, { operation: Operation; instruction: string; format?: OutputFormat; sideNote: string }> = {
+      expand: {
+        operation: 'revise',
+        instruction: 'Amplía el borrador activo con más contexto, datos y matices sin perder precisión.',
+        sideNote: 'Ampliando borrador activo...',
+      },
+      revise: {
+        operation: 'revise',
+        instruction: 'Ajusta el borrador activo para mejorar claridad, ritmo y enfoque editorial.',
+        sideNote: 'Ajustando borrador activo...',
+      },
+      question: {
+        operation: 'question',
+        instruction: 'Genera preguntas críticas y de seguimiento sobre el borrador activo.',
+        sideNote: 'Generando preguntas críticas...',
+      },
+      format: {
+        operation: 'format',
+        instruction: 'Adapta el borrador activo a un carrusel de Instagram con enfoque periodístico.',
+        format: 'instagram_carousel',
+        sideNote: 'Formateando salida social...',
+      },
+    };
+
+    const next = config[action];
+    setLoading(true);
+    setError(null);
+    setSideNote(next.sideNote);
+    setOperation(next.operation);
+    if (next.format) {
+      setOutputFormat(next.format);
+    }
+
+    try {
+      const response = await createSession(next.instruction, {
+        sessionId: activeSessionId,
+        operation: next.operation,
+        targetDraftId: selectedDraftId,
+        outputFormat: next.format ?? outputFormat,
+        useWebContext,
+      });
+      setActiveSession(response);
+      setActiveSessionId(response.session_id);
+      setSideNote(`Acción completada: ${next.operation}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo ejecutar la acción rápida');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function syncDrive(action: 'create' | 'update' | 'delete') {
     if (!activeSessionId || driveLoading) {
       return;
@@ -526,7 +615,7 @@ export function App() {
           <div className="brand-mark">N</div>
           <div>
             <strong>NOVA</strong>
-            <span>White-box newsroom AI</span>
+            <span>Sala de redacción asistida</span>
           </div>
         </div>
 
@@ -583,6 +672,11 @@ export function App() {
           <div>
             <span className="eyebrow">NOVA Studio</span>
             <h1>{activeSession?.input_text ? summarizeText(activeSession.input_text, 74) : 'Nueva conversación'}</h1>
+            <p className="topbar-lead">
+              {activeSessionId
+                ? 'Edita, pregunta y reformatea desde el mismo flujo editorial.'
+                : 'Inicia una investigación y observa en vivo cómo piensa cada agente.'}
+            </p>
             <small className="active-text-label">{activeTextDescriptor}</small>
           </div>
           <div className="topbar-status">
@@ -600,7 +694,43 @@ export function App() {
                   <strong>{message.title}</strong>
                   {message.meta ? <span>{message.meta}</span> : null}
                 </div>
-                <pre>{message.body}</pre>
+                {message.role === 'assistant' && message.agentBlocks?.length ? (
+                  <div className="agent-output-list">
+                    {message.agentBlocks.map((block) => (
+                      <article
+                        className={`agent-output-card ${block.agent === 'editorial' ? 'agent-output-card--primary' : ''}`}
+                        key={`${message.id}-${block.agent}`}
+                      >
+                        <header>
+                          <strong>{agentLabel(block.agent)}</strong>
+                          <div className="agent-output-badges">
+                            <span>{block.tokens_used ?? 0} tk</span>
+                            {block.warnings?.length ? <span>{block.warnings.length} alertas</span> : null}
+                            {block.questions?.length ? <span>{block.questions.length} preguntas</span> : null}
+                            {block.error ? <span className="badge-error">error</span> : null}
+                          </div>
+                        </header>
+                        <pre>{block.output}</pre>
+                      </article>
+                    ))}
+                    <div className="agent-action-row">
+                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('expand')} type="button">
+                        Ampliar
+                      </button>
+                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('revise')} type="button">
+                        Ajustar
+                      </button>
+                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('question')} type="button">
+                        Preguntas
+                      </button>
+                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('format')} type="button">
+                        Carrusel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <pre>{message.body}</pre>
+                )}
               </div>
             </article>
           ))}
@@ -624,8 +754,13 @@ export function App() {
 
           {messages.length === 0 && !loading && (
             <div className="welcome-state">
-              <h2>Pregunta, edita o pide una pieza periodística.</h2>
-              <p>NOVA mostrará la respuesta final y dejará visible cómo pensaron y qué hicieron los agentes.</p>
+              <h2>Haz una pregunta y construye una pieza lista para publicar.</h2>
+              <p>NOVA entrega resultado final, trazabilidad por agente y acciones rápidas para iterar sin salir del editor.</p>
+              <div className="welcome-kpis" aria-label="Indicadores de flujo editorial">
+                <span>Pensar visible</span>
+                <span>Hacer accionable</span>
+                <span>Output reutilizable</span>
+              </div>
               <div className="prompt-grid">
                 <button onClick={() => setInputText('Escribe un artículo sobre los retos de la transición energética justa en Colombia.')} type="button">
                   Artículo con enfoque local
@@ -706,6 +841,13 @@ export function App() {
             <small>{activeTextDescriptor}</small>
           </div>
 
+          {!activeSessionId && (
+            <div className="canvas-empty">
+              <strong>Canvas listo para producir</strong>
+              <p>Envía una primera instrucción para crear borrador, luego ajusta versión por versión desde este panel.</p>
+            </div>
+          )}
+
           <textarea
             aria-label="Borrador activo"
             disabled={!activeSessionId}
@@ -778,8 +920,11 @@ export function App() {
           <div>
             <span className="eyebrow">Trazabilidad</span>
             <h2>Pensar y hacer</h2>
+            <div className="progress-line" aria-label="Progreso de agentes">
+              <span style={{ width: `${progressPercent}%` }} />
+            </div>
           </div>
-          <span className="live-pill">{activeSessionEvents.length || events.length} eventos</span>
+          <span className="live-pill">{completedAgents}/{agentResults.length || 0} agentes</span>
         </div>
 
         <div className="segmented-control" role="tablist" aria-label="Modo de trazabilidad">
@@ -793,10 +938,15 @@ export function App() {
 
         <div className="work-list">
           {visibleWorkItems.map((item) => (
-            <article className="work-item" key={item.id}>
+            <article className={`work-item ${item.error ? 'work-item--error' : ''}`} key={item.id}>
               <div className="work-item-top">
                 <span className={item.done ? 'step-dot step-dot--done' : 'step-dot'} />
                 <strong>{item.title}</strong>
+                <div className="work-badges">
+                  {typeof item.tokensUsed === 'number' ? <span>{item.tokensUsed} tk</span> : null}
+                  {item.warningsCount ? <span>{item.warningsCount} alertas</span> : null}
+                  {item.questionsCount ? <span>{item.questionsCount} preguntas</span> : null}
+                </div>
               </div>
               <p>{item.body}</p>
               <small>{item.meta}</small>
