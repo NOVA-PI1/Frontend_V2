@@ -1,4 +1,35 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import {
+  Bot,
+  Brain,
+  ChevronDown,
+  FileText,
+  Globe2,
+  History,
+  LogOut,
+  MessageSquarePlus,
+  PanelRight,
+  Paperclip,
+  PenLine,
+  Plus,
+  RefreshCw,
+  Save,
+  SendHorizontal,
+  Sparkles,
+  Trash2,
+  UploadCloud,
+  Wrench,
+} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -229,6 +260,683 @@ function MarkdownMessage({ children }: { children: string }) {
     <div className="markdown-message">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
     </div>
+  );
+}
+
+type IconButtonProps = {
+  children?: ReactNode;
+  className?: string;
+  disabled?: boolean;
+  icon: ReactNode;
+  onClick?: () => void;
+  title: string;
+  type?: 'button' | 'submit';
+};
+
+function IconButton({ children, className = '', disabled, icon, onClick, title, type = 'button' }: IconButtonProps) {
+  return (
+    <button className={`icon-button ${className}`} disabled={disabled} onClick={onClick} title={title} type={type}>
+      {icon}
+      {children ? <span>{children}</span> : null}
+    </button>
+  );
+}
+
+type SidebarProps = {
+  activeSessionId: string | null;
+  health: HealthResponse | null;
+  sessions: SessionSummary[];
+  user: AuthUser | null;
+  onLogout: () => void;
+  onNewSession: () => void;
+  onRemoveSession: (sessionId: string) => void;
+  onSelectSession: (sessionId: string) => void;
+};
+
+function Sidebar({
+  activeSessionId,
+  health,
+  sessions,
+  user,
+  onLogout,
+  onNewSession,
+  onRemoveSession,
+  onSelectSession,
+}: SidebarProps) {
+  return (
+    <aside className="sidebar">
+      <div className="brand">
+        <div className="brand-mark">N</div>
+        <div>
+          <strong>NOVA</strong>
+          <span>Redacción asistida</span>
+        </div>
+      </div>
+
+      <IconButton className="new-chat-button" icon={<MessageSquarePlus size={18} />} onClick={onNewSession} title="Nueva conversación">
+        Nueva conversación
+      </IconButton>
+
+      <div className="connection-chip">
+        <span className={`status-dot ${health?.status === 'ok' ? 'status-dot--live' : ''}`} />
+        <div>
+          <strong>{health?.status === 'ok' ? 'Backend activo' : 'Backend pendiente'}</strong>
+          <small>{getApiBaseUrl()}</small>
+        </div>
+      </div>
+
+      {user && (
+        <div className="user-chip">
+          {user.avatar_url ? <img alt="" src={user.avatar_url} /> : <div className="avatar">{user.name.slice(0, 1)}</div>}
+          <div>
+            <strong>{user.name}</strong>
+            <small>{user.email}</small>
+          </div>
+          <IconButton className="icon-button--ghost" icon={<LogOut size={16} />} onClick={onLogout} title="Cerrar sesión" />
+        </div>
+      )}
+
+      <section className="sidebar-section">
+        <div className="section-title">
+          <span><History size={15} /> Historial</span>
+          <small>{sessions.length}</small>
+        </div>
+        <div className="session-list">
+          {sessions.map((session) => (
+            <div
+              key={session.session_id}
+              className={`session-item session-item--group ${session.session_id === activeSessionId ? 'session-item--active' : ''}`}
+            >
+              <button className="session-item__main" onClick={() => onSelectSession(session.session_id)} type="button">
+                <strong>{summarizeText(session.title, 54)}</strong>
+                <span>{session.status} · {formatTimestamp(session.updated_at)}</span>
+              </button>
+              <IconButton
+                className="session-item__delete"
+                icon={<Trash2 size={15} />}
+                onClick={() => onRemoveSession(session.session_id)}
+                title="Eliminar investigación"
+              />
+            </div>
+          ))}
+          {sessions.length === 0 && <p className="empty-state">Aún no hay sesiones.</p>}
+        </div>
+      </section>
+    </aside>
+  );
+}
+
+type TopBarProps = {
+  activeSession: SessionResponse | null;
+  activeSessionId: string | null;
+  activeTextDescriptor: string;
+};
+
+function TopBar({ activeSession, activeSessionId, activeTextDescriptor }: TopBarProps) {
+  return (
+    <header className="topbar">
+      <div>
+        <span className="eyebrow">NOVA Reportera</span>
+        <h1>{activeSession?.input_text ? summarizeText(activeSession.input_text, 82) : 'Nueva conversación'}</h1>
+        <p className="topbar-lead">
+          {activeSessionId
+            ? 'Trabaja la historia en conversación, con trazabilidad y canvas siempre a la vista.'
+            : 'Cuéntame el tema, el ángulo o la pregunta para iniciar la Caja Blanca editorial.'}
+        </p>
+      </div>
+      <div className="topbar-status">
+        <span>{activeSession?.status ?? 'sin sesión'}</span>
+        <small>{activeTextDescriptor} · {shortId(activeSessionId)}</small>
+      </div>
+    </header>
+  );
+}
+
+type MessageStreamProps = {
+  activeSession: SessionResponse | null;
+  agentResults: AgentResult[];
+  bottomRef: RefObject<HTMLDivElement>;
+  completedAgents: number;
+  loading: boolean;
+  messages: ChatMessage[];
+  primaryOutput: string;
+  setInputText: (value: string) => void;
+  sideNote: string;
+};
+
+function MessageStream({
+  activeSession,
+  agentResults,
+  bottomRef,
+  completedAgents,
+  loading,
+  messages,
+  primaryOutput,
+  setInputText,
+  sideNote,
+}: MessageStreamProps) {
+  return (
+    <section className="message-stream" aria-label="Conversación">
+      {messages.map((message) => (
+        <article className={`message message--${message.role}`} key={message.id}>
+          <div className="avatar">{message.role === 'user' ? 'Tú' : 'N'}</div>
+          <div className="message-content">
+            <div className="message-top">
+              <strong>{message.title}</strong>
+              {message.meta ? <span>{message.meta}</span> : null}
+            </div>
+
+            {message.role === 'assistant' && message.agentBlocks?.length ? (
+              <section className="answer-card">
+                <div className="answer-card__top">
+                  <div>
+                    <span className="eyebrow">Respuesta principal</span>
+                    <strong>{activeSession?.metadata?.display_status ? String(activeSession.metadata.display_status) : 'Borrador editorial'}</strong>
+                  </div>
+                  <div className="agent-output-badges">
+                    <span>{countWords(primaryOutput)} palabras</span>
+                    <span>{completedAgents}/{agentResults.length || 0} agentes</span>
+                  </div>
+                </div>
+                <MarkdownMessage>{primaryOutput || message.body}</MarkdownMessage>
+              </section>
+            ) : (
+              <MarkdownMessage>{message.body}</MarkdownMessage>
+            )}
+          </div>
+        </article>
+      ))}
+
+      {loading && (
+        <article className="message message--assistant">
+          <div className="avatar">N</div>
+          <div className="message-content">
+            <div className="message-top">
+              <strong>NOVA</strong>
+              <span>{sideNote}</span>
+            </div>
+            <div className="thinking-loader">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
+        </article>
+      )}
+
+      {messages.length === 0 && !loading && (
+        <div className="welcome-state">
+          <span className="eyebrow">Caja Blanca</span>
+          <h2>¿Qué estamos pensando hoy?</h2>
+          <p>NOVA construye una respuesta principal y deja visible cómo pensó, qué hizo y qué puedes editar después.</p>
+          <div className="prompt-grid">
+            <button onClick={() => setInputText('Escribe un artículo sobre los retos de la transición energética justa en Colombia.')} type="button">
+              Artículo con enfoque local
+            </button>
+            <button onClick={() => setInputText('Revisa éticamente este texto y señala riesgos de sesgo, daño o falta de contexto.')} type="button">
+              Revisión ética
+            </button>
+            <button onClick={() => setInputText('Convierte esta nota en un hilo breve para redes y una entradilla para web.')} type="button">
+              Adaptación multimodal
+            </button>
+          </div>
+        </div>
+      )}
+      <div ref={bottomRef} />
+    </section>
+  );
+}
+
+type WorkPanelProps = {
+  activeSession: SessionResponse | null;
+  activeSessionEvents: BusEvent[];
+  activeSessionId: string | null;
+  activeTextDescriptor: string;
+  agentResults: AgentResult[];
+  canvasSaving: boolean;
+  canvasText: string;
+  completedAgents: number;
+  driveLoading: boolean;
+  loading: boolean;
+  progressPercent: number;
+  questionsLoading: boolean;
+  selectedDraftId: number | null;
+  supportingAgents: AgentResult[];
+  visibleWorkItems: WorkItem[];
+  workMode: WorkMode;
+  onCanvasTextChange: (value: string) => void;
+  onDraftChange: (draftId: number | null) => void;
+  onQuickAction: (action: QuickAction) => void;
+  onRequestQuestions: () => void;
+  onRunQuestion: (question: string) => void;
+  onSaveCanvasDraft: () => void;
+  onSyncDrive: (action: 'create' | 'update' | 'delete') => void;
+  onWorkModeChange: (mode: WorkMode) => void;
+};
+
+function WorkPanel(props: WorkPanelProps) {
+  const {
+    activeSession,
+    activeSessionEvents,
+    activeSessionId,
+    activeTextDescriptor,
+    agentResults,
+    canvasSaving,
+    canvasText,
+    completedAgents,
+    driveLoading,
+    loading,
+    progressPercent,
+    questionsLoading,
+    selectedDraftId,
+    supportingAgents,
+    visibleWorkItems,
+    workMode,
+    onCanvasTextChange,
+    onDraftChange,
+    onQuickAction,
+    onRequestQuestions,
+    onRunQuestion,
+    onSaveCanvasDraft,
+    onSyncDrive,
+    onWorkModeChange,
+  } = props;
+
+  return (
+    <aside className="work-panel" aria-label="Panel de trabajo">
+      <div className="work-panel__header">
+        <div>
+          <span className="eyebrow">Panel principal</span>
+          <h2>{workMode === 'think' ? 'Pensar' : 'Hacer'}</h2>
+        </div>
+        <PanelRight size={20} />
+      </div>
+
+      <div className="segmented-control segmented-control--wide" role="tablist" aria-label="Modo de trabajo">
+        <button className={workMode === 'think' ? 'active' : ''} onClick={() => onWorkModeChange('think')} type="button">
+          <Brain size={16} /> Pensar
+        </button>
+        <button className={workMode === 'do' ? 'active' : ''} onClick={() => onWorkModeChange('do')} type="button">
+          <Wrench size={16} /> Hacer
+        </button>
+      </div>
+
+      {workMode === 'think' ? (
+        <ThinkPanel
+          activeSessionEvents={activeSessionEvents}
+          agentResults={agentResults}
+          completedAgents={completedAgents}
+          progressPercent={progressPercent}
+          supportingAgents={supportingAgents}
+          visibleWorkItems={visibleWorkItems}
+        />
+      ) : (
+        <CanvasPanel
+          activeSession={activeSession}
+          activeSessionId={activeSessionId}
+          activeTextDescriptor={activeTextDescriptor}
+          canvasSaving={canvasSaving}
+          canvasText={canvasText}
+          driveLoading={driveLoading}
+          loading={loading}
+          questionsLoading={questionsLoading}
+          selectedDraftId={selectedDraftId}
+          onCanvasTextChange={onCanvasTextChange}
+          onDraftChange={onDraftChange}
+          onQuickAction={onQuickAction}
+          onRequestQuestions={onRequestQuestions}
+          onRunQuestion={onRunQuestion}
+          onSaveCanvasDraft={onSaveCanvasDraft}
+          onSyncDrive={onSyncDrive}
+        />
+      )}
+    </aside>
+  );
+}
+
+function ThinkPanel({
+  activeSessionEvents,
+  agentResults,
+  completedAgents,
+  progressPercent,
+  supportingAgents,
+  visibleWorkItems,
+}: Pick<WorkPanelProps, 'activeSessionEvents' | 'agentResults' | 'completedAgents' | 'progressPercent' | 'supportingAgents' | 'visibleWorkItems'>) {
+  return (
+    <div className="panel-stack">
+      <section className="panel-section">
+        <div className="section-title">
+          <span><Brain size={15} /> Trazabilidad</span>
+          <small>{completedAgents}/{agentResults.length || 0}</small>
+        </div>
+        <div className="progress-line" aria-label="Progreso de agentes">
+          <span style={{ width: `${progressPercent}%` }} />
+        </div>
+        <div className="work-list">
+          {visibleWorkItems.map((item) => (
+            <article className={`work-item ${item.error ? 'work-item--error' : ''}`} key={item.id}>
+              <div className="work-item-top">
+                <span className={item.done ? 'step-dot step-dot--done' : 'step-dot'} />
+                <strong>{item.title}</strong>
+                <div className="work-badges">
+                  {typeof item.tokensUsed === 'number' ? <span>{item.tokensUsed} tk</span> : null}
+                  {item.warningsCount ? <span>{item.warningsCount} alertas</span> : null}
+                  {item.questionsCount ? <span>{item.questionsCount} preguntas</span> : null}
+                </div>
+              </div>
+              <p>{summarizeText(item.body, 260)}</p>
+              <small>{item.meta}</small>
+            </article>
+          ))}
+          {visibleWorkItems.length === 0 && <p className="empty-state">Sin trazabilidad todavía.</p>}
+        </div>
+      </section>
+
+      <section className="panel-section">
+        <div className="section-title">
+          <span><Bot size={15} /> Agentes de soporte</span>
+          <small>{supportingAgents.length}</small>
+        </div>
+        {supportingAgents.map((block) => (
+          <details className="inline-panel inline-panel--flat" key={block.agent}>
+            <summary>
+              <span>{agentLabel(block.agent)}</span>
+              <small>{block.tokens_used ?? 0} tk <ChevronDown size={14} /></small>
+            </summary>
+            <MarkdownMessage>{block.output}</MarkdownMessage>
+          </details>
+        ))}
+        {supportingAgents.length === 0 && <p className="empty-state">Los agentes aparecerán aquí al completar la sesión.</p>}
+      </section>
+
+      {activeSessionEvents.length > 0 && (
+        <section className="panel-section">
+          <div className="section-title">
+            <span><Sparkles size={15} /> Eventos en vivo</span>
+            <small>{activeSessionEvents.length}</small>
+          </div>
+          <div className="event-strip">
+            {activeSessionEvents.slice(-6).map((event) => (
+              <span key={event.id}>{event.type}</span>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function CanvasPanel({
+  activeSession,
+  activeSessionId,
+  activeTextDescriptor,
+  canvasSaving,
+  canvasText,
+  driveLoading,
+  loading,
+  questionsLoading,
+  selectedDraftId,
+  onCanvasTextChange,
+  onDraftChange,
+  onQuickAction,
+  onRequestQuestions,
+  onRunQuestion,
+  onSaveCanvasDraft,
+  onSyncDrive,
+}: Pick<
+  WorkPanelProps,
+  | 'activeSession'
+  | 'activeSessionId'
+  | 'activeTextDescriptor'
+  | 'canvasSaving'
+  | 'canvasText'
+  | 'driveLoading'
+  | 'loading'
+  | 'questionsLoading'
+  | 'selectedDraftId'
+  | 'onCanvasTextChange'
+  | 'onDraftChange'
+  | 'onQuickAction'
+  | 'onRequestQuestions'
+  | 'onRunQuestion'
+  | 'onSaveCanvasDraft'
+  | 'onSyncDrive'
+>) {
+  return (
+    <div className="panel-stack">
+      <section className="panel-section">
+        <div className="section-title">
+          <span><PenLine size={15} /> Canvas editorial</span>
+          <small>{activeTextDescriptor}</small>
+        </div>
+        <textarea
+          aria-label="Borrador activo"
+          disabled={!activeSessionId}
+          onChange={(event) => onCanvasTextChange(event.target.value)}
+          placeholder="El borrador activo aparecerá aquí."
+          value={canvasText}
+        />
+        <div className="canvas-actions">
+          <select
+            aria-label="Historial de versiones"
+            disabled={!activeSession?.drafts?.length}
+            onChange={(event) => onDraftChange(event.target.value ? Number(event.target.value) : null)}
+            value={selectedDraftId ?? ''}
+          >
+            <option value="">Sin versión</option>
+            {(activeSession?.drafts ?? []).map((draft) => (
+              <option key={draft.id ?? draft.version} value={draft.id ?? ''}>
+                {draftLabel(draft)}
+              </option>
+            ))}
+          </select>
+          <IconButton disabled={!activeSessionId || canvasSaving || !canvasText.trim()} icon={<Save size={16} />} onClick={onSaveCanvasDraft} title="Guardar versión">
+            {canvasSaving ? 'Guardando' : 'Guardar'}
+          </IconButton>
+        </div>
+      </section>
+
+      <section className="panel-section">
+        <div className="section-title">
+          <span><Wrench size={15} /> Acciones rápidas</span>
+          <small>{activeSession?.drive_document ? 'Drive activo' : 'Local'}</small>
+        </div>
+        <div className="quick-grid">
+          <IconButton disabled={!activeSessionId || loading} icon={<Plus size={16} />} onClick={() => onQuickAction('expand')} title="Ampliar">
+            Ampliar
+          </IconButton>
+          <IconButton disabled={!activeSessionId || loading} icon={<RefreshCw size={16} />} onClick={() => onQuickAction('revise')} title="Ajustar">
+            Ajustar
+          </IconButton>
+          <IconButton disabled={!activeSessionId || loading} icon={<Brain size={16} />} onClick={() => onQuickAction('question')} title="Preguntas">
+            Preguntas
+          </IconButton>
+          <IconButton disabled={!activeSessionId || loading} icon={<FileText size={16} />} onClick={() => onQuickAction('format')} title="Carrusel">
+            Carrusel
+          </IconButton>
+        </div>
+        <div className="drive-actions">
+          <IconButton disabled={!activeSessionId || driveLoading} icon={<UploadCloud size={16} />} onClick={() => onSyncDrive(activeSession?.drive_document ? 'update' : 'create')} title="Sincronizar Drive">
+            {activeSession?.drive_document ? 'Actualizar Drive' : 'Crear Drive'}
+          </IconButton>
+          {activeSession?.drive_document && (
+            <a href={activeSession.drive_document.url} rel="noreferrer" target="_blank">
+              Abrir Doc
+            </a>
+          )}
+          <IconButton disabled={!activeSession?.drive_document || driveLoading} icon={<Trash2 size={16} />} onClick={() => onSyncDrive('delete')} title="Borrar Drive" />
+        </div>
+      </section>
+
+      <section className="panel-section">
+        <div className="section-title">
+          <span><Brain size={15} /> Preguntas sugeridas</span>
+          <small>{activeSession?.suggested_questions?.length ?? 0}</small>
+        </div>
+        <div className="question-list">
+          <IconButton disabled={!activeSessionId || questionsLoading} icon={<Sparkles size={16} />} onClick={onRequestQuestions} title="Generar preguntas">
+            {questionsLoading ? 'Generando' : 'Generar preguntas'}
+          </IconButton>
+          {(activeSession?.suggested_questions ?? []).slice(0, 6).map((question) => (
+            <button key={question} onClick={() => onRunQuestion(question)} type="button">
+              {question}
+            </button>
+          ))}
+          {!activeSession?.suggested_questions?.length && <p className="empty-state">Sin preguntas todavía.</p>}
+        </div>
+      </section>
+
+      <ContextPanel activeSession={activeSession} />
+    </div>
+  );
+}
+
+function ContextPanel({ activeSession }: { activeSession: SessionResponse | null }) {
+  return (
+    <section className="panel-section">
+      <div className="section-title">
+        <span><Globe2 size={15} /> Contexto y formatos</span>
+        <small>{(activeSession?.knowledge_hits?.length ?? 0) + (activeSession?.web_hits?.length ?? 0)}</small>
+      </div>
+      <div className="context-grid">
+        <section className="knowledge-box">
+          <div className="section-title">
+            <span>BCL / RAG</span>
+            <small>{activeSession?.knowledge_hits?.length ?? 0}</small>
+          </div>
+          {(activeSession?.knowledge_hits ?? []).slice(0, 3).map((hit, index) => (
+            <article key={`${hit.source}-${index}`}>
+              <strong>{hit.source}</strong>
+              <p>{summarizeText(hit.text, 130)}</p>
+              {typeof hit.score === 'number' && <small>score {hit.score.toFixed(2)}</small>}
+            </article>
+          ))}
+          {!activeSession?.knowledge_hits?.length && <p className="empty-state">Sin documentos recuperados todavía.</p>}
+        </section>
+
+        <section className="knowledge-box">
+          <div className="section-title">
+            <span>Web / citas</span>
+            <small>{activeSession?.web_hits?.length ?? 0}</small>
+          </div>
+          {(activeSession?.web_hits ?? []).slice(0, 4).map((hit) => (
+            <article key={hit.url}>
+              <strong>{hit.title}</strong>
+              <p>{summarizeText(hit.snippet || hit.url, 140)}</p>
+              <a href={hit.url} rel="noreferrer" target="_blank">
+                Abrir fuente
+              </a>
+              {hit.published_at && <small>{hit.published_at}</small>}
+            </article>
+          ))}
+          {!activeSession?.web_hits?.length && <p className="empty-state">Activa Web antes de enviar para traer contexto externo.</p>}
+        </section>
+      </div>
+
+      {activeSession?.social_outputs && Object.keys(activeSession.social_outputs).length > 0 && (
+        <section className="social-box">
+          <div className="section-title">
+            <span>Formatos sociales</span>
+            <small>{Object.keys(activeSession.social_outputs).length}</small>
+          </div>
+          {Object.entries(activeSession.social_outputs).map(([format, output]) => (
+            <article key={format}>
+              <strong>{FORMAT_OPTIONS.find((option) => option.value === format)?.label ?? format}</strong>
+              <MarkdownMessage>{output}</MarkdownMessage>
+            </article>
+          ))}
+        </section>
+      )}
+    </section>
+  );
+}
+
+type ComposerProps = {
+  activeSessionId: string | null;
+  error: string | null;
+  inputText: string;
+  loading: boolean;
+  operation: Operation;
+  outputFormat: OutputFormat;
+  uploadingFiles: boolean;
+  useWebContext: boolean;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onInputChange: (value: string) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onOperationChange: (operation: Operation) => void;
+  onOutputFormatChange: (format: OutputFormat) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onUseWebContextChange: (enabled: boolean) => void;
+};
+
+function Composer({
+  activeSessionId,
+  error,
+  inputText,
+  loading,
+  operation,
+  outputFormat,
+  uploadingFiles,
+  useWebContext,
+  onFileChange,
+  onInputChange,
+  onKeyDown,
+  onOperationChange,
+  onOutputFormatChange,
+  onSubmit,
+  onUseWebContextChange,
+}: ComposerProps) {
+  return (
+    <form className="composer" onSubmit={onSubmit}>
+      {error && <p className="error-line">{error}</p>}
+      <div className="composer-controls" aria-label="Controles editoriales">
+        <select aria-label="Operación" onChange={(event) => onOperationChange(event.target.value as Operation)} value={operation}>
+          <option value="generate">Generar</option>
+          <option value="revise">Revisar canvas</option>
+          <option value="question">Preguntar</option>
+          <option value="format">Formatear</option>
+        </select>
+        <select
+          aria-label="Formato de salida"
+          disabled={operation !== 'format'}
+          onChange={(event) => onOutputFormatChange(event.target.value as OutputFormat)}
+          value={outputFormat}
+        >
+          {FORMAT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <label className="toggle-control" title="Usar contexto web">
+          <input checked={useWebContext} onChange={(event) => onUseWebContextChange(event.target.checked)} type="checkbox" />
+          <Globe2 size={15} />
+          Web
+        </label>
+        <label className="file-control" title="Adjuntar archivos">
+          <input disabled={!activeSessionId || uploadingFiles} onChange={onFileChange} type="file" multiple />
+          <Paperclip size={15} />
+          <small>{uploadingFiles ? 'Subiendo...' : 'Adjuntar'}</small>
+        </label>
+      </div>
+      <textarea
+        aria-label="Mensaje para NOVA"
+        onChange={(event) => onInputChange(event.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={
+          operation === 'revise'
+            ? 'Indica cómo modificar el borrador activo...'
+            : operation === 'question'
+              ? 'Pregunta algo sobre el texto activo...'
+              : operation === 'format'
+                ? 'Añade una instrucción opcional para el formato...'
+                : 'Escribe tu solicitud...'
+        }
+        rows={1}
+        value={inputText}
+      />
+      <IconButton className="send-button" disabled={loading || (!inputText.trim() && operation === 'generate')} icon={<SendHorizontal size={18} />} title="Enviar" type="submit" />
+    </form>
   );
 }
 
@@ -595,7 +1303,7 @@ export function App() {
     }
   }
 
-  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const files = event.target.files;
     if (!files || !activeSessionId) return;
     setUploadingFiles(true);
@@ -669,419 +1377,79 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">N</div>
-          <div>
-            <strong>NOVA</strong>
-            <span>Sala de redacción asistida</span>
-          </div>
-        </div>
-
-        <button className="new-chat-button" onClick={startNewSession} type="button">
-          <span>+</span>
-          Nueva conversación
-        </button>
-
-        <div className="connection-chip">
-          <span className={`status-dot ${health?.status === 'ok' ? 'status-dot--live' : ''}`} />
-          <div>
-            <strong>{health?.status === 'ok' ? 'Backend activo' : 'Backend pendiente'}</strong>
-            <small>{getApiBaseUrl()}</small>
-          </div>
-        </div>
-
-        {user && (
-          <div className="user-chip">
-            {user.avatar_url ? <img alt="" src={user.avatar_url} /> : <div className="avatar">{user.name.slice(0, 1)}</div>}
-            <div>
-              <strong>{user.name}</strong>
-              <small>{user.email}</small>
-            </div>
-            <button onClick={handleLogout} type="button" title="Cerrar sesión">
-              Salir
-            </button>
-          </div>
-        )}
-
-        <section className="sidebar-section">
-          <div className="section-title">
-            <span>Historial</span>
-            <small>{sessions.length}</small>
-          </div>
-          <div className="session-list">
-            {sessions.map((session) => (
-              <div
-                key={session.session_id}
-                className={`session-item session-item--group ${session.session_id === activeSessionId ? 'session-item--active' : ''}`}
-              >
-                <button
-                  className="session-item__main"
-                  onClick={() => setActiveSessionId(session.session_id)}
-                  type="button"
-                >
-                  <strong>{summarizeText(session.title, 54)}</strong>
-                  <span>{session.status} · {formatTimestamp(session.updated_at)}</span>
-                </button>
-                <button
-                  className="session-item__delete"
-                  onClick={() => void removeSession(session.session_id)}
-                  type="button"
-                  title="Eliminar investigación"
-                >
-                  Eliminar
-                </button>
-              </div>
-            ))}
-            {sessions.length === 0 && <p className="empty-state">Aún no hay sesiones.</p>}
-          </div>
-        </section>
-      </aside>
+      <Sidebar
+        activeSessionId={activeSessionId}
+        health={health}
+        sessions={sessions}
+        user={user}
+        onLogout={handleLogout}
+        onNewSession={startNewSession}
+        onRemoveSession={(sessionId) => void removeSession(sessionId)}
+        onSelectSession={setActiveSessionId}
+      />
 
       <main className="chat-shell">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">NOVA Reportera</span>
-            <h1>{activeSession?.input_text ? summarizeText(activeSession.input_text, 82) : 'Nueva conversación'}</h1>
-            <p className="topbar-lead">
-              {activeSessionId
-                ? 'Trabaja la historia en conversación: respuesta, canvas y trazabilidad viven en el mismo flujo.'
-                : 'Cuéntame el tema, el ángulo o la pregunta para iniciar la Caja Blanca editorial.'}
-            </p>
-            <small className="active-text-label">{activeTextDescriptor}</small>
-          </div>
-          <div className="topbar-status">
-            <span>{activeSession?.status ?? 'sin sesión'}</span>
-            <small>{shortId(activeSessionId)}</small>
-          </div>
-        </header>
-
-        <section className="message-stream" aria-label="Conversación">
-          {messages.map((message) => (
-            <article className={`message message--${message.role}`} key={message.id}>
-              <div className="avatar">{message.role === 'user' ? 'Tú' : 'N'}</div>
-              <div className="message-content">
-                <div className="message-top">
-                  <strong>{message.title}</strong>
-                  {message.meta ? <span>{message.meta}</span> : null}
-                </div>
-
-                {message.role === 'assistant' && message.agentBlocks?.length ? (
-                  <div className="agent-output-list">
-                    <section className="answer-card">
-                      <div className="answer-card__top">
-                        <div>
-                          <span className="eyebrow">Respuesta principal</span>
-                          <strong>{activeSession?.metadata?.display_status ? String(activeSession.metadata.display_status) : 'Borrador editorial'}</strong>
-                        </div>
-                        <div className="agent-output-badges">
-                          <span>{countWords(primaryOutput)} palabras</span>
-                          <span>{completedAgents}/{agentResults.length || 0} agentes</span>
-                        </div>
-                      </div>
-                      <MarkdownMessage>{primaryOutput || message.body}</MarkdownMessage>
-                    </section>
-
-                    <div className="agent-action-row" aria-label="Acciones rápidas">
-                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('expand')} type="button">
-                        Ampliar
-                      </button>
-                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('revise')} type="button">
-                        Ajustar
-                      </button>
-                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('question')} type="button">
-                        Preguntas
-                      </button>
-                      <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('format')} type="button">
-                        Carrusel
-                      </button>
-                      <button disabled={!activeSessionId || canvasSaving || !canvasText.trim()} onClick={saveCanvasDraft} type="button">
-                        {canvasSaving ? 'Guardando...' : 'Guardar versión'}
-                      </button>
-                      <button disabled={!activeSessionId || driveLoading} onClick={() => void syncDrive(activeSession?.drive_document ? 'update' : 'create')} type="button">
-                        {activeSession?.drive_document ? 'Actualizar Drive' : 'Crear Drive'}
-                      </button>
-                    </div>
-
-                    <div className="inline-panels">
-                      <details className="inline-panel" open>
-                        <summary>
-                          <span>Canvas editorial</span>
-                          <small>{activeTextDescriptor}</small>
-                        </summary>
-                        <textarea
-                          aria-label="Borrador activo"
-                          disabled={!activeSessionId}
-                          onChange={(event) => setCanvasText(event.target.value)}
-                          placeholder="El borrador activo aparecerá aquí."
-                          value={canvasText}
-                        />
-                        <div className="canvas-actions">
-                          <select
-                            aria-label="Historial de versiones"
-                            disabled={!activeSession?.drafts?.length}
-                            onChange={(event) => {
-                              const nextId = event.target.value ? Number(event.target.value) : null;
-                              const nextDraft = (activeSession?.drafts ?? []).find((draft) => draft.id === nextId) ?? null;
-                              setSelectedDraftId(nextId);
-                              setCanvasText(nextDraft?.content ?? activeSession?.editorial?.output ?? '');
-                            }}
-                            value={selectedDraftId ?? ''}
-                          >
-                            <option value="">Sin versión</option>
-                            {(activeSession?.drafts ?? []).map((draft) => (
-                              <option key={draft.id ?? draft.version} value={draft.id ?? ''}>
-                                {draftLabel(draft)}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="drive-actions">
-                            {activeSession?.drive_document && (
-                              <a href={activeSession.drive_document.url} rel="noreferrer" target="_blank">
-                                Abrir Doc
-                              </a>
-                            )}
-                            <button disabled={!activeSession?.drive_document || driveLoading} onClick={() => void syncDrive('delete')} type="button">
-                              Borrar Drive
-                            </button>
-                          </div>
-                        </div>
-                      </details>
-
-                      <details className="inline-panel">
-                        <summary>
-                          <span>Trazabilidad</span>
-                          <small>{completedAgents}/{agentResults.length || 0} agentes</small>
-                        </summary>
-                        <div className="progress-line" aria-label="Progreso de agentes">
-                          <span style={{ width: `${progressPercent}%` }} />
-                        </div>
-                        <div className="segmented-control" role="tablist" aria-label="Modo de trazabilidad">
-                          <button className={workMode === 'think' ? 'active' : ''} onClick={() => setWorkMode('think')} type="button">
-                            Pensar
-                          </button>
-                          <button className={workMode === 'do' ? 'active' : ''} onClick={() => setWorkMode('do')} type="button">
-                            Hacer
-                          </button>
-                        </div>
-                        <div className="work-list">
-                          {visibleWorkItems.map((item) => (
-                            <article className={`work-item ${item.error ? 'work-item--error' : ''}`} key={item.id}>
-                              <div className="work-item-top">
-                                <span className={item.done ? 'step-dot step-dot--done' : 'step-dot'} />
-                                <strong>{item.title}</strong>
-                                <div className="work-badges">
-                                  {typeof item.tokensUsed === 'number' ? <span>{item.tokensUsed} tk</span> : null}
-                                  {item.warningsCount ? <span>{item.warningsCount} alertas</span> : null}
-                                  {item.questionsCount ? <span>{item.questionsCount} preguntas</span> : null}
-                                </div>
-                              </div>
-                              <p>{summarizeText(item.body, 260)}</p>
-                              <small>{item.meta}</small>
-                            </article>
-                          ))}
-                          {visibleWorkItems.length === 0 && <p className="empty-state">Sin trazabilidad todavía.</p>}
-                        </div>
-                        {activeSessionEvents.length > 0 && (
-                          <div className="event-strip">
-                            {activeSessionEvents.slice(-4).map((event) => (
-                              <span key={event.id}>{event.type}</span>
-                            ))}
-                          </div>
-                        )}
-                      </details>
-
-                      {supportingAgents.map((block) => (
-                        <details className="inline-panel" key={`${message.id}-${block.agent}`}>
-                          <summary>
-                            <span>{agentLabel(block.agent)}</span>
-                            <small>{block.tokens_used ?? 0} tk</small>
-                          </summary>
-                          <div className="agent-output-badges">
-                            {block.warnings?.length ? <span>{block.warnings.length} alertas</span> : null}
-                            {block.questions?.length ? <span>{block.questions.length} preguntas</span> : null}
-                            {block.error ? <span className="badge-error">error</span> : null}
-                          </div>
-                          <MarkdownMessage>{block.output}</MarkdownMessage>
-                        </details>
-                      ))}
-
-                      <details className="inline-panel">
-                        <summary>
-                          <span>Preguntas sugeridas</span>
-                          <small>{activeSession?.suggested_questions?.length ?? 0}</small>
-                        </summary>
-                        <div className="question-list">
-                          <button disabled={!activeSessionId || questionsLoading} onClick={() => void requestQuestions()} type="button">
-                            {questionsLoading ? 'Generando...' : 'Generar preguntas'}
-                          </button>
-                          {(activeSession?.suggested_questions ?? []).slice(0, 6).map((question) => (
-                            <button key={question} onClick={() => void runQuestion(question)} type="button">
-                              {question}
-                            </button>
-                          ))}
-                          {!activeSession?.suggested_questions?.length && <p className="empty-state">Sin preguntas todavía.</p>}
-                        </div>
-                      </details>
-
-                      <details className="inline-panel">
-                        <summary>
-                          <span>Contexto y formatos</span>
-                          <small>{(activeSession?.knowledge_hits?.length ?? 0) + (activeSession?.web_hits?.length ?? 0)}</small>
-                        </summary>
-                        <div className="context-grid">
-                          <section className="knowledge-box">
-                            <div className="section-title">
-                              <span>BCL / RAG</span>
-                              <small>{activeSession?.knowledge_hits?.length ?? 0}</small>
-                            </div>
-                            {(activeSession?.knowledge_hits ?? []).slice(0, 3).map((hit, index) => (
-                              <article key={`${hit.source}-${index}`}>
-                                <strong>{hit.source}</strong>
-                                <p>{summarizeText(hit.text, 130)}</p>
-                                {typeof hit.score === 'number' && <small>score {hit.score.toFixed(2)}</small>}
-                              </article>
-                            ))}
-                            {!activeSession?.knowledge_hits?.length && <p className="empty-state">Sin documentos recuperados todavía.</p>}
-                          </section>
-
-                          <section className="knowledge-box">
-                            <div className="section-title">
-                              <span>Web / citas</span>
-                              <small>{activeSession?.web_hits?.length ?? 0}</small>
-                            </div>
-                            {(activeSession?.web_hits ?? []).slice(0, 4).map((hit) => (
-                              <article key={hit.url}>
-                                <strong>{hit.title}</strong>
-                                <p>{summarizeText(hit.snippet || hit.url, 140)}</p>
-                                <a href={hit.url} rel="noreferrer" target="_blank">
-                                  Abrir fuente
-                                </a>
-                                {hit.published_at && <small>{hit.published_at}</small>}
-                              </article>
-                            ))}
-                            {!activeSession?.web_hits?.length && <p className="empty-state">Activa Web antes de enviar para traer contexto externo.</p>}
-                          </section>
-                        </div>
-
-                        {activeSession?.social_outputs && Object.keys(activeSession.social_outputs).length > 0 && (
-                          <section className="social-box">
-                            <div className="section-title">
-                              <span>Formatos sociales</span>
-                              <small>{Object.keys(activeSession.social_outputs).length}</small>
-                            </div>
-                            {Object.entries(activeSession.social_outputs).map(([format, output]) => (
-                              <article key={format}>
-                                <strong>{FORMAT_OPTIONS.find((option) => option.value === format)?.label ?? format}</strong>
-                                <MarkdownMessage>{output}</MarkdownMessage>
-                              </article>
-                            ))}
-                          </section>
-                        )}
-                      </details>
-                    </div>
-                  </div>
-                ) : (
-                  <MarkdownMessage>{message.body}</MarkdownMessage>
-                )}
-              </div>
-            </article>
-          ))}
-
-          {loading && (
-            <article className="message message--assistant">
-              <div className="avatar">N</div>
-              <div className="message-content">
-                <div className="message-top">
-                  <strong>NOVA</strong>
-                  <span>{sideNote}</span>
-                </div>
-                <div className="thinking-loader">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-              </div>
-            </article>
-          )}
-
-          {messages.length === 0 && !loading && (
-            <div className="welcome-state">
-              <span className="eyebrow">Caja Blanca</span>
-              <h2>Haz una pregunta y construye una pieza lista para publicar.</h2>
-              <p>NOVA entrega respuesta principal, trazabilidad por agente y un canvas editable sin salir del chat.</p>
-              <div className="welcome-kpis" aria-label="Indicadores de flujo editorial">
-                <span>Pensar visible</span>
-                <span>Hacer accionable</span>
-                <span>Markdown listo</span>
-              </div>
-              <div className="prompt-grid">
-                <button onClick={() => setInputText('Escribe un artículo sobre los retos de la transición energética justa en Colombia.')} type="button">
-                  Artículo con enfoque local
-                </button>
-                <button onClick={() => setInputText('Revisa éticamente este texto y señala riesgos de sesgo, daño o falta de contexto.')} type="button">
-                  Revisión ética
-                </button>
-                <button onClick={() => setInputText('Convierte esta nota en un hilo breve para redes y una entradilla para web.')} type="button">
-                  Adaptación multimodal
-                </button>
-              </div>
-            </div>
-          )}
-          <div ref={bottomRef} />
-        </section>
-
-        <form className="composer" onSubmit={handleSubmit}>
-          {error && <p className="error-line">{error}</p>}
-          <div className="composer-controls" aria-label="Controles editoriales">
-            <select aria-label="Operación" onChange={(event) => setOperation(event.target.value as Operation)} value={operation}>
-              <option value="generate">Generar</option>
-              <option value="revise">Revisar canvas</option>
-              <option value="question">Preguntar</option>
-              <option value="format">Formatear</option>
-            </select>
-            <select
-              aria-label="Formato de salida"
-              disabled={operation !== 'format'}
-              onChange={(event) => setOutputFormat(event.target.value as OutputFormat)}
-              value={outputFormat}
-            >
-              {FORMAT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <label className="toggle-control">
-              <input checked={useWebContext} onChange={(event) => setUseWebContext(event.target.checked)} type="checkbox" />
-              Web
-            </label>
-            <label className="file-control">
-              <input disabled={!activeSessionId || uploadingFiles} onChange={handleFileChange} type="file" multiple />
-              <small>{uploadingFiles ? 'Subiendo...' : 'Adjuntar'}</small>
-            </label>
-          </div>
-          <textarea
-            aria-label="Mensaje para NOVA"
-            onChange={(event) => setInputText(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-            placeholder={
-              operation === 'revise'
-                ? 'Indica cómo modificar el borrador activo...'
-                : operation === 'question'
-                  ? 'Pregunta algo sobre el texto activo...'
-                  : operation === 'format'
-                    ? 'Añade una instrucción opcional para el formato...'
-                    : 'Escribe tu solicitud...'
-            }
-            rows={1}
-            value={inputText}
-          />
-          <button className="send-button" disabled={loading || (!inputText.trim() && operation === 'generate')} title="Enviar" type="submit">
-            ↑
-          </button>
-        </form>
+        <TopBar activeSession={activeSession} activeSessionId={activeSessionId} activeTextDescriptor={activeTextDescriptor} />
+        <MessageStream
+          activeSession={activeSession}
+          agentResults={agentResults}
+          bottomRef={bottomRef}
+          completedAgents={completedAgents}
+          loading={loading}
+          messages={messages}
+          primaryOutput={primaryOutput}
+          setInputText={setInputText}
+          sideNote={sideNote}
+        />
+        <Composer
+          activeSessionId={activeSessionId}
+          error={error}
+          inputText={inputText}
+          loading={loading}
+          operation={operation}
+          outputFormat={outputFormat}
+          uploadingFiles={uploadingFiles}
+          useWebContext={useWebContext}
+          onFileChange={handleFileChange}
+          onInputChange={setInputText}
+          onKeyDown={handleComposerKeyDown}
+          onOperationChange={setOperation}
+          onOutputFormatChange={setOutputFormat}
+          onSubmit={handleSubmit}
+          onUseWebContextChange={setUseWebContext}
+        />
       </main>
+
+      <WorkPanel
+        activeSession={activeSession}
+        activeSessionEvents={activeSessionEvents}
+        activeSessionId={activeSessionId}
+        activeTextDescriptor={activeTextDescriptor}
+        agentResults={agentResults}
+        canvasSaving={canvasSaving}
+        canvasText={canvasText}
+        completedAgents={completedAgents}
+        driveLoading={driveLoading}
+        loading={loading}
+        progressPercent={progressPercent}
+        questionsLoading={questionsLoading}
+        selectedDraftId={selectedDraftId}
+        supportingAgents={supportingAgents}
+        visibleWorkItems={visibleWorkItems}
+        workMode={workMode}
+        onCanvasTextChange={setCanvasText}
+        onDraftChange={(nextId) => {
+          const nextDraft = (activeSession?.drafts ?? []).find((draft) => draft.id === nextId) ?? null;
+          setSelectedDraftId(nextId);
+          setCanvasText(nextDraft?.content ?? activeSession?.editorial?.output ?? '');
+        }}
+        onQuickAction={(action) => void runQuickAction(action)}
+        onRequestQuestions={() => void requestQuestions()}
+        onRunQuestion={(question) => void runQuestion(question)}
+        onSaveCanvasDraft={() => void saveCanvasDraft()}
+        onSyncDrive={(action) => void syncDrive(action)}
+        onWorkModeChange={setWorkMode}
+      />
     </div>
   );
 }
