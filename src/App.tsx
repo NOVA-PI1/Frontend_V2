@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   applyDriveAction,
+  uploadAttachments,
+  deleteSession,
   clearAuthToken,
   consumeAuthParams,
   createDraft,
@@ -250,6 +252,7 @@ export function App() {
   const [selectedDraftId, setSelectedDraftId] = useState<number | null>(null);
   const [canvasText, setCanvasText] = useState('');
   const [canvasSaving, setCanvasSaving] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
   const [questionsLoading, setQuestionsLoading] = useState(false);
   const [driveLoading, setDriveLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -443,6 +446,28 @@ export function App() {
     setActiveSession(session);
   }
 
+  async function removeSession(sessionId: string) {
+    const session = sessions.find((item) => item.session_id === sessionId);
+    const confirmed = window.confirm(`Eliminar la investigación \"${session?.title ?? sessionId}\"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await deleteSession(sessionId);
+      setSessions((current) => current.filter((item) => item.session_id !== sessionId));
+      setEvents((current) => current.filter((event) => event.session_id !== sessionId));
+
+      if (activeSessionId === sessionId) {
+        startNewSession();
+      }
+      setSideNote('Investigación eliminada.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo eliminar la investigación');
+    }
+  }
+
   async function saveCanvasDraft() {
     if (!activeSessionId || !canvasText.trim() || canvasSaving) {
       return;
@@ -570,6 +595,24 @@ export function App() {
     }
   }
 
+  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = event.target.files;
+    if (!files || !activeSessionId) return;
+    setUploadingFiles(true);
+    setError(null);
+    try {
+      await uploadAttachments(activeSessionId, files);
+      await refreshActiveSession(activeSessionId);
+      setSideNote('Archivos subidos e indexados');
+      // limpiar input
+      (event.target as HTMLInputElement).value = '';
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo subir el archivo');
+    } finally {
+      setUploadingFiles(false);
+    }
+  }
+
   function startNewSession() {
     setActiveSession(null);
     setActiveSessionId(null);
@@ -668,15 +711,27 @@ export function App() {
           </div>
           <div className="session-list">
             {sessions.map((session) => (
-              <button
+              <div
                 key={session.session_id}
-                className={`session-item ${session.session_id === activeSessionId ? 'session-item--active' : ''}`}
-                onClick={() => setActiveSessionId(session.session_id)}
-                type="button"
+                className={`session-item session-item--group ${session.session_id === activeSessionId ? 'session-item--active' : ''}`}
               >
-                <strong>{summarizeText(session.title, 54)}</strong>
-                <span>{session.status} · {formatTimestamp(session.updated_at)}</span>
-              </button>
+                <button
+                  className="session-item__main"
+                  onClick={() => setActiveSessionId(session.session_id)}
+                  type="button"
+                >
+                  <strong>{summarizeText(session.title, 54)}</strong>
+                  <span>{session.status} · {formatTimestamp(session.updated_at)}</span>
+                </button>
+                <button
+                  className="session-item__delete"
+                  onClick={() => void removeSession(session.session_id)}
+                  type="button"
+                  title="Eliminar investigación"
+                >
+                  Eliminar
+                </button>
+              </div>
             ))}
             {sessions.length === 0 && <p className="empty-state">Aún no hay sesiones.</p>}
           </div>
@@ -1000,6 +1055,10 @@ export function App() {
             <label className="toggle-control">
               <input checked={useWebContext} onChange={(event) => setUseWebContext(event.target.checked)} type="checkbox" />
               Web
+            </label>
+            <label className="file-control">
+              <input disabled={!activeSessionId || uploadingFiles} onChange={handleFileChange} type="file" multiple />
+              <small>{uploadingFiles ? 'Subiendo...' : 'Adjuntar'}</small>
             </label>
           </div>
           <textarea

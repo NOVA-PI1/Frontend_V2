@@ -98,6 +98,12 @@ export async function getSession(sessionId: string): Promise<SessionResponse> {
   return requestJson<SessionResponse>(`/session/${sessionId}`);
 }
 
+export async function deleteSession(sessionId: string): Promise<{ deleted: true }> {
+  return requestJson<{ deleted: true }>(`/session/${sessionId}`, {
+    method: 'DELETE',
+  });
+}
+
 export type SessionOptions = {
   sessionId?: string;
   operation?: Operation;
@@ -169,4 +175,33 @@ export async function applyDriveAction(
       content: content || null,
     }),
   });
+}
+
+export async function uploadAttachments(sessionId: string, files: FileList | File[]): Promise<any> {
+  const form = new FormData();
+  if (files instanceof FileList) {
+    for (let i = 0; i < files.length; i++) {
+      form.append('files', files[i]);
+    }
+  } else {
+    for (const f of files) {
+      form.append('files', f);
+    }
+  }
+
+  const token = getStoredAuthToken();
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+  const response = await fetch(`${apiBaseUrl}/session/${sessionId}/attachments`, {
+    method: 'POST',
+    body: form,
+    headers,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`HTTP ${response.status}: ${detail || response.statusText}`);
+  }
+
+  return response.json();
 }
