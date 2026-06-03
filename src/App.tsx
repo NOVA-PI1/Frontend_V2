@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   applyDriveAction,
   clearAuthToken,
@@ -216,6 +218,18 @@ function buildDoItems(session: SessionResponse | null): WorkItem[] {
   }));
 }
 
+function countWords(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function MarkdownMessage({ children }: { children: string }) {
+  return (
+    <div className="markdown-message">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+    </div>
+  );
+}
+
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [authProviders, setAuthProviders] = useState<AuthProvidersResponse | null>(null);
@@ -354,6 +368,8 @@ export function App() {
   const activeTextDescriptor = currentTextLabel(activeSession, activeDraft);
   const completedAgents = agentResults.filter((result) => !result.error && result.output?.trim().length).length;
   const progressPercent = agentResults.length ? Math.round((completedAgents / agentResults.length) * 100) : 0;
+  const primaryOutput = activeSession?.current_draft?.content ?? activeSession?.editorial?.output ?? '';
+  const supportingAgents = agentResults.filter((result) => result.agent !== 'editorial');
 
   async function submitPrompt() {
     const prompt = inputText.trim();
@@ -670,12 +686,12 @@ export function App() {
       <main className="chat-shell">
         <header className="topbar">
           <div>
-            <span className="eyebrow">NOVA Studio</span>
-            <h1>{activeSession?.input_text ? summarizeText(activeSession.input_text, 74) : 'Nueva conversación'}</h1>
+            <span className="eyebrow">NOVA Reportera</span>
+            <h1>{activeSession?.input_text ? summarizeText(activeSession.input_text, 82) : 'Nueva conversación'}</h1>
             <p className="topbar-lead">
               {activeSessionId
-                ? 'Edita, pregunta y reformatea desde el mismo flujo editorial.'
-                : 'Inicia una investigación y observa en vivo cómo piensa cada agente.'}
+                ? 'Trabaja la historia en conversación: respuesta, canvas y trazabilidad viven en el mismo flujo.'
+                : 'Cuéntame el tema, el ángulo o la pregunta para iniciar la Caja Blanca editorial.'}
             </p>
             <small className="active-text-label">{activeTextDescriptor}</small>
           </div>
@@ -694,26 +710,24 @@ export function App() {
                   <strong>{message.title}</strong>
                   {message.meta ? <span>{message.meta}</span> : null}
                 </div>
+
                 {message.role === 'assistant' && message.agentBlocks?.length ? (
                   <div className="agent-output-list">
-                    {message.agentBlocks.map((block) => (
-                      <article
-                        className={`agent-output-card ${block.agent === 'editorial' ? 'agent-output-card--primary' : ''}`}
-                        key={`${message.id}-${block.agent}`}
-                      >
-                        <header>
-                          <strong>{agentLabel(block.agent)}</strong>
-                          <div className="agent-output-badges">
-                            <span>{block.tokens_used ?? 0} tk</span>
-                            {block.warnings?.length ? <span>{block.warnings.length} alertas</span> : null}
-                            {block.questions?.length ? <span>{block.questions.length} preguntas</span> : null}
-                            {block.error ? <span className="badge-error">error</span> : null}
-                          </div>
-                        </header>
-                        <pre>{block.output}</pre>
-                      </article>
-                    ))}
-                    <div className="agent-action-row">
+                    <section className="answer-card">
+                      <div className="answer-card__top">
+                        <div>
+                          <span className="eyebrow">Respuesta principal</span>
+                          <strong>{activeSession?.metadata?.display_status ? String(activeSession.metadata.display_status) : 'Borrador editorial'}</strong>
+                        </div>
+                        <div className="agent-output-badges">
+                          <span>{countWords(primaryOutput)} palabras</span>
+                          <span>{completedAgents}/{agentResults.length || 0} agentes</span>
+                        </div>
+                      </div>
+                      <MarkdownMessage>{primaryOutput || message.body}</MarkdownMessage>
+                    </section>
+
+                    <div className="agent-action-row" aria-label="Acciones rápidas">
                       <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('expand')} type="button">
                         Ampliar
                       </button>
@@ -726,10 +740,194 @@ export function App() {
                       <button disabled={!activeSessionId || loading} onClick={() => void runQuickAction('format')} type="button">
                         Carrusel
                       </button>
+                      <button disabled={!activeSessionId || canvasSaving || !canvasText.trim()} onClick={saveCanvasDraft} type="button">
+                        {canvasSaving ? 'Guardando...' : 'Guardar versión'}
+                      </button>
+                      <button disabled={!activeSessionId || driveLoading} onClick={() => void syncDrive(activeSession?.drive_document ? 'update' : 'create')} type="button">
+                        {activeSession?.drive_document ? 'Actualizar Drive' : 'Crear Drive'}
+                      </button>
+                    </div>
+
+                    <div className="inline-panels">
+                      <details className="inline-panel" open>
+                        <summary>
+                          <span>Canvas editorial</span>
+                          <small>{activeTextDescriptor}</small>
+                        </summary>
+                        <textarea
+                          aria-label="Borrador activo"
+                          disabled={!activeSessionId}
+                          onChange={(event) => setCanvasText(event.target.value)}
+                          placeholder="El borrador activo aparecerá aquí."
+                          value={canvasText}
+                        />
+                        <div className="canvas-actions">
+                          <select
+                            aria-label="Historial de versiones"
+                            disabled={!activeSession?.drafts?.length}
+                            onChange={(event) => {
+                              const nextId = event.target.value ? Number(event.target.value) : null;
+                              const nextDraft = (activeSession?.drafts ?? []).find((draft) => draft.id === nextId) ?? null;
+                              setSelectedDraftId(nextId);
+                              setCanvasText(nextDraft?.content ?? activeSession?.editorial?.output ?? '');
+                            }}
+                            value={selectedDraftId ?? ''}
+                          >
+                            <option value="">Sin versión</option>
+                            {(activeSession?.drafts ?? []).map((draft) => (
+                              <option key={draft.id ?? draft.version} value={draft.id ?? ''}>
+                                {draftLabel(draft)}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="drive-actions">
+                            {activeSession?.drive_document && (
+                              <a href={activeSession.drive_document.url} rel="noreferrer" target="_blank">
+                                Abrir Doc
+                              </a>
+                            )}
+                            <button disabled={!activeSession?.drive_document || driveLoading} onClick={() => void syncDrive('delete')} type="button">
+                              Borrar Drive
+                            </button>
+                          </div>
+                        </div>
+                      </details>
+
+                      <details className="inline-panel">
+                        <summary>
+                          <span>Trazabilidad</span>
+                          <small>{completedAgents}/{agentResults.length || 0} agentes</small>
+                        </summary>
+                        <div className="progress-line" aria-label="Progreso de agentes">
+                          <span style={{ width: `${progressPercent}%` }} />
+                        </div>
+                        <div className="segmented-control" role="tablist" aria-label="Modo de trazabilidad">
+                          <button className={workMode === 'think' ? 'active' : ''} onClick={() => setWorkMode('think')} type="button">
+                            Pensar
+                          </button>
+                          <button className={workMode === 'do' ? 'active' : ''} onClick={() => setWorkMode('do')} type="button">
+                            Hacer
+                          </button>
+                        </div>
+                        <div className="work-list">
+                          {visibleWorkItems.map((item) => (
+                            <article className={`work-item ${item.error ? 'work-item--error' : ''}`} key={item.id}>
+                              <div className="work-item-top">
+                                <span className={item.done ? 'step-dot step-dot--done' : 'step-dot'} />
+                                <strong>{item.title}</strong>
+                                <div className="work-badges">
+                                  {typeof item.tokensUsed === 'number' ? <span>{item.tokensUsed} tk</span> : null}
+                                  {item.warningsCount ? <span>{item.warningsCount} alertas</span> : null}
+                                  {item.questionsCount ? <span>{item.questionsCount} preguntas</span> : null}
+                                </div>
+                              </div>
+                              <p>{summarizeText(item.body, 260)}</p>
+                              <small>{item.meta}</small>
+                            </article>
+                          ))}
+                          {visibleWorkItems.length === 0 && <p className="empty-state">Sin trazabilidad todavía.</p>}
+                        </div>
+                        {activeSessionEvents.length > 0 && (
+                          <div className="event-strip">
+                            {activeSessionEvents.slice(-4).map((event) => (
+                              <span key={event.id}>{event.type}</span>
+                            ))}
+                          </div>
+                        )}
+                      </details>
+
+                      {supportingAgents.map((block) => (
+                        <details className="inline-panel" key={`${message.id}-${block.agent}`}>
+                          <summary>
+                            <span>{agentLabel(block.agent)}</span>
+                            <small>{block.tokens_used ?? 0} tk</small>
+                          </summary>
+                          <div className="agent-output-badges">
+                            {block.warnings?.length ? <span>{block.warnings.length} alertas</span> : null}
+                            {block.questions?.length ? <span>{block.questions.length} preguntas</span> : null}
+                            {block.error ? <span className="badge-error">error</span> : null}
+                          </div>
+                          <MarkdownMessage>{block.output}</MarkdownMessage>
+                        </details>
+                      ))}
+
+                      <details className="inline-panel">
+                        <summary>
+                          <span>Preguntas sugeridas</span>
+                          <small>{activeSession?.suggested_questions?.length ?? 0}</small>
+                        </summary>
+                        <div className="question-list">
+                          <button disabled={!activeSessionId || questionsLoading} onClick={() => void requestQuestions()} type="button">
+                            {questionsLoading ? 'Generando...' : 'Generar preguntas'}
+                          </button>
+                          {(activeSession?.suggested_questions ?? []).slice(0, 6).map((question) => (
+                            <button key={question} onClick={() => void runQuestion(question)} type="button">
+                              {question}
+                            </button>
+                          ))}
+                          {!activeSession?.suggested_questions?.length && <p className="empty-state">Sin preguntas todavía.</p>}
+                        </div>
+                      </details>
+
+                      <details className="inline-panel">
+                        <summary>
+                          <span>Contexto y formatos</span>
+                          <small>{(activeSession?.knowledge_hits?.length ?? 0) + (activeSession?.web_hits?.length ?? 0)}</small>
+                        </summary>
+                        <div className="context-grid">
+                          <section className="knowledge-box">
+                            <div className="section-title">
+                              <span>BCL / RAG</span>
+                              <small>{activeSession?.knowledge_hits?.length ?? 0}</small>
+                            </div>
+                            {(activeSession?.knowledge_hits ?? []).slice(0, 3).map((hit, index) => (
+                              <article key={`${hit.source}-${index}`}>
+                                <strong>{hit.source}</strong>
+                                <p>{summarizeText(hit.text, 130)}</p>
+                                {typeof hit.score === 'number' && <small>score {hit.score.toFixed(2)}</small>}
+                              </article>
+                            ))}
+                            {!activeSession?.knowledge_hits?.length && <p className="empty-state">Sin documentos recuperados todavía.</p>}
+                          </section>
+
+                          <section className="knowledge-box">
+                            <div className="section-title">
+                              <span>Web / citas</span>
+                              <small>{activeSession?.web_hits?.length ?? 0}</small>
+                            </div>
+                            {(activeSession?.web_hits ?? []).slice(0, 4).map((hit) => (
+                              <article key={hit.url}>
+                                <strong>{hit.title}</strong>
+                                <p>{summarizeText(hit.snippet || hit.url, 140)}</p>
+                                <a href={hit.url} rel="noreferrer" target="_blank">
+                                  Abrir fuente
+                                </a>
+                                {hit.published_at && <small>{hit.published_at}</small>}
+                              </article>
+                            ))}
+                            {!activeSession?.web_hits?.length && <p className="empty-state">Activa Web antes de enviar para traer contexto externo.</p>}
+                          </section>
+                        </div>
+
+                        {activeSession?.social_outputs && Object.keys(activeSession.social_outputs).length > 0 && (
+                          <section className="social-box">
+                            <div className="section-title">
+                              <span>Formatos sociales</span>
+                              <small>{Object.keys(activeSession.social_outputs).length}</small>
+                            </div>
+                            {Object.entries(activeSession.social_outputs).map(([format, output]) => (
+                              <article key={format}>
+                                <strong>{FORMAT_OPTIONS.find((option) => option.value === format)?.label ?? format}</strong>
+                                <MarkdownMessage>{output}</MarkdownMessage>
+                              </article>
+                            ))}
+                          </section>
+                        )}
+                      </details>
                     </div>
                   </div>
                 ) : (
-                  <pre>{message.body}</pre>
+                  <MarkdownMessage>{message.body}</MarkdownMessage>
                 )}
               </div>
             </article>
@@ -754,12 +952,13 @@ export function App() {
 
           {messages.length === 0 && !loading && (
             <div className="welcome-state">
+              <span className="eyebrow">Caja Blanca</span>
               <h2>Haz una pregunta y construye una pieza lista para publicar.</h2>
-              <p>NOVA entrega resultado final, trazabilidad por agente y acciones rápidas para iterar sin salir del editor.</p>
+              <p>NOVA entrega respuesta principal, trazabilidad por agente y un canvas editable sin salir del chat.</p>
               <div className="welcome-kpis" aria-label="Indicadores de flujo editorial">
                 <span>Pensar visible</span>
                 <span>Hacer accionable</span>
-                <span>Output reutilizable</span>
+                <span>Markdown listo</span>
               </div>
               <div className="prompt-grid">
                 <button onClick={() => setInputText('Escribe un artículo sobre los retos de la transición energética justa en Colombia.')} type="button">
@@ -780,11 +979,7 @@ export function App() {
         <form className="composer" onSubmit={handleSubmit}>
           {error && <p className="error-line">{error}</p>}
           <div className="composer-controls" aria-label="Controles editoriales">
-            <select
-              aria-label="Operación"
-              onChange={(event) => setOperation(event.target.value as Operation)}
-              value={operation}
-            >
+            <select aria-label="Operación" onChange={(event) => setOperation(event.target.value as Operation)} value={operation}>
               <option value="generate">Generar</option>
               <option value="revise">Revisar canvas</option>
               <option value="question">Preguntar</option>
@@ -823,192 +1018,11 @@ export function App() {
             rows={1}
             value={inputText}
           />
-          <button
-            className="send-button"
-            disabled={loading || (!inputText.trim() && operation === 'generate')}
-            title="Enviar"
-            type="submit"
-          >
+          <button className="send-button" disabled={loading || (!inputText.trim() && operation === 'generate')} title="Enviar" type="submit">
             ↑
           </button>
         </form>
       </main>
-
-      <aside className="work-panel">
-        <section className="canvas-box">
-          <div className="section-title">
-            <span>Canvas editorial</span>
-            <small>{activeTextDescriptor}</small>
-          </div>
-
-          {!activeSessionId && (
-            <div className="canvas-empty">
-              <strong>Canvas listo para producir</strong>
-              <p>Envía una primera instrucción para crear borrador, luego ajusta versión por versión desde este panel.</p>
-            </div>
-          )}
-
-          <textarea
-            aria-label="Borrador activo"
-            disabled={!activeSessionId}
-            onChange={(event) => setCanvasText(event.target.value)}
-            placeholder="El borrador activo aparecerá aquí."
-            value={canvasText}
-          />
-
-          <div className="canvas-actions">
-            <select
-              aria-label="Historial de versiones"
-              disabled={!activeSession?.drafts?.length}
-              onChange={(event) => {
-                const nextId = event.target.value ? Number(event.target.value) : null;
-                const nextDraft = (activeSession?.drafts ?? []).find((draft) => draft.id === nextId) ?? null;
-                setSelectedDraftId(nextId);
-                setCanvasText(nextDraft?.content ?? activeSession?.editorial?.output ?? '');
-              }}
-              value={selectedDraftId ?? ''}
-            >
-              <option value="">Sin versión</option>
-              {(activeSession?.drafts ?? []).map((draft) => (
-                <option key={draft.id ?? draft.version} value={draft.id ?? ''}>
-                  {draftLabel(draft)}
-                </option>
-              ))}
-            </select>
-            <button disabled={!activeSessionId || canvasSaving || !canvasText.trim()} onClick={saveCanvasDraft} type="button">
-              {canvasSaving ? 'Guardando...' : 'Guardar'}
-            </button>
-          </div>
-
-          <div className="question-list">
-            <div className="section-title">
-              <span>Preguntas sugeridas</span>
-              <button disabled={!activeSessionId || questionsLoading} onClick={() => void requestQuestions()} type="button">
-                {questionsLoading ? '...' : 'Generar'}
-              </button>
-            </div>
-            {(activeSession?.suggested_questions ?? []).slice(0, 6).map((question) => (
-              <button key={question} onClick={() => void runQuestion(question)} type="button">
-                {question}
-              </button>
-            ))}
-            {!activeSession?.suggested_questions?.length && <p className="empty-state">Sin preguntas todavía.</p>}
-          </div>
-
-          <div className="drive-box">
-            <div>
-              <strong>{activeSession?.drive_document ? 'Google Doc vinculado' : 'Sin Google Doc'}</strong>
-              {activeSession?.drive_document && <small>{formatTimestamp(activeSession.drive_document.last_synced_at)}</small>}
-            </div>
-            <div className="drive-actions">
-              <button disabled={!activeSessionId || driveLoading} onClick={() => void syncDrive(activeSession?.drive_document ? 'update' : 'create')} type="button">
-                {activeSession?.drive_document ? 'Actualizar' : 'Crear'}
-              </button>
-              {activeSession?.drive_document && (
-                <a href={activeSession.drive_document.url} rel="noreferrer" target="_blank">
-                  Abrir
-                </a>
-              )}
-              <button disabled={!activeSession?.drive_document || driveLoading} onClick={() => void syncDrive('delete')} type="button">
-                Borrar
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <div className="work-header">
-          <div>
-            <span className="eyebrow">Trazabilidad</span>
-            <h2>Pensar y hacer</h2>
-            <div className="progress-line" aria-label="Progreso de agentes">
-              <span style={{ width: `${progressPercent}%` }} />
-            </div>
-          </div>
-          <span className="live-pill">{completedAgents}/{agentResults.length || 0} agentes</span>
-        </div>
-
-        <div className="segmented-control" role="tablist" aria-label="Modo de trazabilidad">
-          <button className={workMode === 'think' ? 'active' : ''} onClick={() => setWorkMode('think')} type="button">
-            Pensar
-          </button>
-          <button className={workMode === 'do' ? 'active' : ''} onClick={() => setWorkMode('do')} type="button">
-            Hacer
-          </button>
-        </div>
-
-        <div className="work-list">
-          {visibleWorkItems.map((item) => (
-            <article className={`work-item ${item.error ? 'work-item--error' : ''}`} key={item.id}>
-              <div className="work-item-top">
-                <span className={item.done ? 'step-dot step-dot--done' : 'step-dot'} />
-                <strong>{item.title}</strong>
-                <div className="work-badges">
-                  {typeof item.tokensUsed === 'number' ? <span>{item.tokensUsed} tk</span> : null}
-                  {item.warningsCount ? <span>{item.warningsCount} alertas</span> : null}
-                  {item.questionsCount ? <span>{item.questionsCount} preguntas</span> : null}
-                </div>
-              </div>
-              <p>{item.body}</p>
-              <small>{item.meta}</small>
-            </article>
-          ))}
-
-          {visibleWorkItems.length === 0 && (
-            <div className="empty-work">
-              <strong>{workMode === 'think' ? 'Sin pensamiento aún' : 'Sin acciones aún'}</strong>
-              <p>Cuando ejecutes una solicitud, aquí aparecerán los pasos del backend y los resultados de cada agente.</p>
-            </div>
-          )}
-        </div>
-
-        <section className="knowledge-box">
-          <div className="section-title">
-            <span>BCL / RAG</span>
-            <small>{activeSession?.knowledge_hits?.length ?? 0}</small>
-          </div>
-          {(activeSession?.knowledge_hits ?? []).slice(0, 3).map((hit, index) => (
-            <article key={`${hit.source}-${index}`}>
-              <strong>{hit.source}</strong>
-              <p>{summarizeText(hit.text, 120)}</p>
-              {typeof hit.score === 'number' && <small>score {hit.score.toFixed(2)}</small>}
-            </article>
-          ))}
-          {!activeSession?.knowledge_hits?.length && <p className="empty-state">Sin documentos recuperados todavía.</p>}
-        </section>
-
-        <section className="knowledge-box">
-          <div className="section-title">
-            <span>Web / citas</span>
-            <small>{activeSession?.web_hits?.length ?? 0}</small>
-          </div>
-          {(activeSession?.web_hits ?? []).slice(0, 4).map((hit) => (
-            <article key={hit.url}>
-              <strong>{hit.title}</strong>
-              <p>{summarizeText(hit.snippet || hit.url, 130)}</p>
-              <a href={hit.url} rel="noreferrer" target="_blank">
-                Abrir fuente
-              </a>
-              {hit.published_at && <small>{hit.published_at}</small>}
-            </article>
-          ))}
-          {!activeSession?.web_hits?.length && <p className="empty-state">Activa Web antes de enviar para traer contexto externo.</p>}
-        </section>
-
-        {activeSession?.social_outputs && Object.keys(activeSession.social_outputs).length > 0 && (
-          <section className="knowledge-box">
-            <div className="section-title">
-              <span>Formatos sociales</span>
-              <small>{Object.keys(activeSession.social_outputs).length}</small>
-            </div>
-            {Object.entries(activeSession.social_outputs).map(([format, output]) => (
-              <article key={format}>
-                <strong>{FORMAT_OPTIONS.find((option) => option.value === format)?.label ?? format}</strong>
-                <p>{summarizeText(output, 180)}</p>
-              </article>
-            ))}
-          </section>
-        )}
-      </aside>
     </div>
   );
 }
